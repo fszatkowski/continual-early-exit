@@ -12,11 +12,11 @@ class Appr(Inc_Learning_Appr):
     """
 
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
+                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  lamb=0.1, damping=0.1):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train,
+                                   multi_softmax, fix_bn, eval_on_train,
                                    select_best_model_by_val_loss, logger, exemplars_dataset, scheduler_milestones)
         self.lamb = lamb
         self.damping = damping

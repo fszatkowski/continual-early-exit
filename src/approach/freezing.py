@@ -9,10 +9,10 @@ class Appr(Inc_Learning_Appr):
     """Class implementing the freezing baseline"""
 
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
+                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None, freeze_after=0, all_outputs=False):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, select_best_model_by_val_loss,
+                                   multi_softmax, fix_bn, eval_on_train, select_best_model_by_val_loss,
                                    logger, exemplars_dataset, scheduler_milestones)
         self.freeze_after = freeze_after
         self.all_out = all_outputs

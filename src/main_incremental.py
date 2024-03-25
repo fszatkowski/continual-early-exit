@@ -46,8 +46,6 @@ def main(argv=None):
                         metavar="LOGGER")
     parser.add_argument('--save-models', action='store_true',
                         help='Save trained models (default=%(default)s)')
-    parser.add_argument('--cache-first-task-model', action='store_true',
-                        help='If set, will try to cache first task model to save time (default=%(default)s)')
     parser.add_argument('--last-layer-analysis', action='store_true',
                         help='Plot last layer analysis (default=%(default)s)')
     parser.add_argument('--no-cudnn-deterministic', action='store_true',
@@ -117,18 +115,6 @@ def main(argv=None):
                         help='Momentum factor (default=%(default)s)')
     parser.add_argument('--weight-decay', default=0.0, type=float, required=False,
                         help='Weight decay (L2 penalty) (default=%(default)s)')
-    parser.add_argument('--wu-nepochs', default=0, type=int, required=False,
-                        help='Number of warm-up epochs (default=%(default)s)')
-    parser.add_argument('--wu-lr', default=0.1, type=float, required=False,
-                        help='Warm-up learning rate (default=%(default)s)')
-    parser.add_argument('--wu-fix-bn', action='store_true',
-                        help='Fix batch norm stats during warmup. (default=%(default)s)')
-    parser.add_argument('--wu-scheduler', default='constant', type=str, required=False,
-                        help='Warm-up learning rate scheduler (default=%(default)s)')
-    parser.add_argument('--wu-patience', default=None, type=int, required=False,
-                        help='Patience for warmup, None equals to no early stopping (default=%(default)s)')
-    parser.add_argument('--wu-wd', default=0.001, type=float, required=False,
-                        help='Weight decay value for warmup (default=%(default)s)')
     parser.add_argument('--multi-softmax', action='store_true',
                         help='Apply separate softmax for each task (default=%(default)s)')
     parser.add_argument('--fix-bn', action='store_true',
@@ -148,9 +134,7 @@ def main(argv=None):
     args.results_path = os.path.expanduser(args.results_path)
     base_kwargs = dict(nepochs=args.nepochs, lr=args.lr, lr_min=args.lr_min, lr_factor=args.lr_factor,
                        lr_patience=args.lr_patience, clipgrad=args.clipping, momentum=args.momentum,
-                       wd=args.weight_decay, multi_softmax=args.multi_softmax, wu_nepochs=args.wu_nepochs,
-                       wu_lr=args.wu_lr, wu_fix_bn=args.wu_fix_bn, wu_scheduler=args.wu_scheduler,
-                       wu_patience=args.wu_patience, wu_wd=args.wu_wd, fix_bn=args.fix_bn,
+                       wd=args.weight_decay, multi_softmax=args.multi_softmax, fix_bn=args.fix_bn,
                        eval_on_train=args.eval_on_train, select_best_model_by_val_loss=True,
                        scheduler_milestones=args.scheduler_milestones)
 
@@ -337,30 +321,7 @@ def main(argv=None):
             appr.nepochs = args.ne_first_task
 
         # Train
-        if t == 0 and args.cache_first_task_model:
-            exp_tag = "_".join([d for d in args.datasets]) + "_t" + str(args.num_tasks) + "s" + str(args.nc_first_task)
-            if args.use_test_as_val:
-                exp_tag += "_test_as_val"
-            model_tag = args.network
-            if args.pretrained:
-                model_tag += "_pretrained"
-            model_tag += "_ep" + str(args.nepochs) + "_bs" + str(args.batch_size) + "_lr" + str(args.lr) \
-                         + "_wd" + str(args.weight_decay) + "_m" + str(args.momentum) + "_clip" \
-                         + str(args.clipping) + "_sched" + "_".join([str(m) for m in args.scheduler_milestones])
-            model_ckpt_dir = os.path.join("checkpoints", exp_tag, model_tag)
-            model_ckpt_path = os.path.join(model_ckpt_dir, "model_seed_" + str(args.seed) + ".ckpt")
-            if os.path.exists(model_ckpt_path):
-                print("Loading model from checkpoint: " + model_ckpt_path)
-                net.load_state_dict(torch.load(model_ckpt_path))
-                appr.post_train_process(t, trn_loader[t])
-                appr.exemplars_dataset.collect_exemplars(appr.model, trn_loader[t], val_loader[t].dataset.transform)
-            else:
-                appr.train(t, trn_loader[t], val_loader[t])
-                print("Saving first task checkpoint to: " + model_ckpt_path)
-                os.makedirs(model_ckpt_dir, exist_ok=True)
-                torch.save(net.state_dict(), model_ckpt_path)
-        else:
-            appr.train(t, trn_loader[t], val_loader[t])
+        appr.train(t, trn_loader[t], val_loader[t])
         print('-' * 108)
 
         if t == 0 and args.ne_first_task is not None:

@@ -16,15 +16,14 @@ class Appr(Inc_Learning_Appr):
     """
 
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr=1e-1, wu_fix_bn=False,
-                 wu_scheduler='constant', wu_patience=None, wu_wd=0., fix_bn=False, eval_on_train=False,
+                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  val_exemplar_percentage=0.1,
                  num_bias_epochs=200, T=2, lamb=-1):
         # Sec. 6.1. CIFAR-100: 2,000 exemplars, ImageNet-1000: 20,000 exemplars, Celeb-10000: 50,000 exemplars
         # Sec. 6.2. weight decay for CIFAR-100 is 0.0002, for ImageNet-1000 and Celeb-10000 is 0.0001
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, wu_nepochs, wu_lr, wu_fix_bn, wu_scheduler, wu_patience, wu_wd,
+                                   multi_softmax,
                                    fix_bn, eval_on_train, select_best_model_by_val_loss, logger, exemplars_dataset,
                                    scheduler_milestones)
         self.val_percentage = val_exemplar_percentage

@@ -11,16 +11,16 @@ class Appr(Inc_Learning_Appr):
     """Class implementing A-LwF approach from 
     Achieving a Better Stability-Plasticity Trade-off via Auxiliary Networks in Continual Learning 
     (CVPR 2023)"""
+
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr=1e-1, wu_fix_bn=False,
-                 wu_scheduler='constant', wu_patience=None, wu_wd=0., fix_bn=False, eval_on_train=False,
+                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  lamb=1, lamb_a=1, T=2, mc=False, taskwise_kd=False,
                  ta=False,
                  cka=False, debug_loss=False
                  ):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, wu_nepochs, wu_lr, wu_fix_bn, wu_scheduler, wu_patience, wu_wd,
+                                   multi_softmax,
                                    fix_bn, eval_on_train, select_best_model_by_val_loss, logger, exemplars_dataset,
                                    scheduler_milestones)
         self.model_old = None
@@ -98,17 +98,19 @@ class Appr(Inc_Learning_Appr):
             print('=' * 108)
             # Args for the new trainer
             new_trainer_args = dict(nepochs=self.nepochs, lr=self.lr, lr_min=self.lr_min, lr_factor=self.lr_factor,
-                            lr_patience=self.lr_patience, clipgrad=self.clipgrad, momentum=0.9,
-                            wd=5e-4, multi_softmax=self.multi_softmax, wu_nepochs=0,
-                            eval_on_train=self.eval_on_train, select_best_model_by_val_loss=self.select_best_model_by_val_loss,
-                            logger=self.logger, exemplars_dataset=self.exemplars_dataset, scheduler_milestones=self.scheduler_milestones)
+                                    lr_patience=self.lr_patience, clipgrad=self.clipgrad, momentum=0.9,
+                                    wd=5e-4, multi_softmax=self.multi_softmax,
+                                    eval_on_train=self.eval_on_train,
+                                    select_best_model_by_val_loss=self.select_best_model_by_val_loss,
+                                    logger=self.logger, exemplars_dataset=self.exemplars_dataset,
+                                    scheduler_milestones=self.scheduler_milestones)
             self.model_aux = deepcopy(self.model)
             # Train auxiliary model on current dataset
             new_trainer = NewTaskTrainer(self.model_aux, self.device, **new_trainer_args)
             new_trainer.train_loop(t, trn_loader, val_loader)
             self.model_aux.eval()
             self.model_aux.freeze_all()
-        
+
         print('=' * 108)
         print("Training of Main Network")
         print('=' * 108)
@@ -145,7 +147,8 @@ class Appr(Inc_Learning_Appr):
             # Forward current model
             outputs = self.model(images)
 
-            loss, loss_kd, loss_kd_a, loss_ce = self.criterion(t, outputs, targets, targets_old, targets_aux, return_partial_losses=True)
+            loss, loss_kd, loss_kd_a, loss_ce = self.criterion(t, outputs, targets, targets_old, targets_aux,
+                                                               return_partial_losses=True)
             if self.debug_loss:
                 self.logger.log_scalar(task=None, iter=None, name='loss_kd', group=f"debug_t{t}",
                                        value=float(loss_kd))
@@ -191,11 +194,10 @@ class Appr(Inc_Learning_Appr):
                 total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
                 total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
                 total_num += len(targets)
-        
+
         if self.cka and t > 0 and self.training:
             _cka = cka(self.model, self.model_old, val_loader, self.device)
             self.logger.log_scalar(task=None, iter=None, name=f't_{t}', group=f"cka", value=_cka)
-
 
         return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
 
@@ -234,7 +236,8 @@ class Appr(Inc_Learning_Appr):
                 for _t in range(t):
                     soft_target = torch.nn.functional.softmax(targets_old[_t] / self.T, dim=1)
                     output_log = torch.nn.functional.log_softmax(outputs[_t] / self.T, dim=1)
-                    loss_kd[_t] = torch.nn.functional.kl_div(output_log, soft_target, reduction='batchmean') * (self.T ** 2)
+                    loss_kd[_t] = torch.nn.functional.kl_div(output_log, soft_target, reduction='batchmean') * (
+                                self.T ** 2)
                 loss_kd = loss_kd.sum()
             else:
                 loss_kd = self.cross_entropy(kd_outputs, kd_outputs_old, exp=1.0 / self.T)
@@ -242,7 +245,7 @@ class Appr(Inc_Learning_Appr):
             # Auxiliary KD
             # Knowledge distillation loss for current task on new network
             loss_kd_a = self.cross_entropy(outputs[t],
-                                                   targets_aux[t] - self.model.task_offset[t], exp=1.0 / self.T)
+                                           targets_aux[t] - self.model.task_offset[t], exp=1.0 / self.T)
         else:
             loss_kd, loss_kd_a = 0, 0
 
@@ -257,12 +260,16 @@ class Appr(Inc_Learning_Appr):
         else:
             return self.lamb * loss_kd + self.lamb_a * loss_kd_a + loss_ce
 
+
 class NewTaskTrainer(Inc_Learning_Appr):
     def __init__(self, model, device, nepochs=160, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0.9, wd=5e-4, multi_softmax=False, 
-                 wu_nepochs=0, wu_lr=1e-1, wu_fix_bn=False, wu_scheduler='constant', wu_patience=None, wu_wd=0., fix_bn=False,
-                 eval_on_train=False, select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None):
-        super(NewTaskTrainer, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, wu_nepochs, wu_lr, wu_fix_bn, wu_scheduler, wu_patience, wu_wd,
-                                   fix_bn, eval_on_train, select_best_model_by_val_loss, logger, exemplars_dataset,
-                                   scheduler_milestones)
+                 momentum=0.9, wd=5e-4, multi_softmax=False,
+                 fix_bn=False,
+                 eval_on_train=False, select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None,
+                 scheduler_milestones=None):
+        super(NewTaskTrainer, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad,
+                                             momentum, wd,
+                                             multi_softmax,
+                                             fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
+                                             exemplars_dataset,
+                                             scheduler_milestones)

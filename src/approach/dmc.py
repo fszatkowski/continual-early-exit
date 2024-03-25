@@ -15,12 +15,11 @@ class Appr(Inc_Learning_Appr):
     """
 
     def __init__(self, model, device, nepochs=160, lr=0.1, lr_min=1e-4, lr_factor=10, lr_patience=8, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr=1e-1, wu_fix_bn=False,
-                 wu_scheduler='constant', wu_patience=None, fix_bn=False, eval_on_train=False,
+                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  aux_dataset='imagenet_32', aux_batch_size=128, dd_loss_correction=False):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, wu_nepochs, wu_lr, wu_fix_bn, wu_scheduler, wu_patience, fix_bn,
+                                   multi_softmax, fix_bn,
                                    eval_on_train, select_best_model_by_val_loss,
                                    logger, exemplars_dataset, scheduler_milestones)
         self.model_old = None
@@ -95,9 +94,7 @@ class Appr(Inc_Learning_Appr):
             # Args for the new data trainer and for the student trainer are the same
             dmc_args = dict(nepochs=self.nepochs, lr=self.lr, lr_min=self.lr_min, lr_factor=self.lr_factor,
                             lr_patience=self.lr_patience, clipgrad=self.clipgrad, momentum=self.momentum,
-                            wd=self.wd, multi_softmax=self.multi_softmax, wu_nepochs=self.warmup_epochs,
-                            wu_lr=self.warmup_lr, wu_fix_bn=self.warmup_fix_bn, wu_scheduler=self.warmup_scheduler,
-                            wu_patience=self.warmup_patience, fix_bn=self.fix_bn,
+                            wd=self.wd, multi_softmax=self.multi_softmax, fix_bn=self.fix_bn,
                             select_best_model_by_val_loss=self.select_best_model_by_val_loss,
                             eval_on_train=self.eval_on_train, logger=self.logger,
                             scheduler_milestones=self.scheduler_milestones)
@@ -128,24 +125,20 @@ class Appr(Inc_Learning_Appr):
 
 class NewTaskTrainer(Inc_Learning_Appr):
     def __init__(self, model, device, nepochs=160, lr=0.1, lr_min=1e-4, lr_factor=10, lr_patience=8, clipgrad=10000,
-                 momentum=0.9, wd=5e-4, multi_softmax=False, wu_nepochs=0, wu_lr=1e-1, wu_fix_bn=False,
-                 wu_scheduler='constant', wu_patience=None, fix_bn=False, eval_on_train=False,
+                 momentum=0.9, wd=5e-4, multi_softmax=False,fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, scheduler_milestones=None):
         super(NewTaskTrainer, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad,
-                                             momentum, wd, multi_softmax, wu_nepochs, wu_lr, wu_fix_bn, wu_scheduler,
-                                             wu_patience, fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
+                                             momentum, wd, multi_softmax, fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
                                              None, scheduler_milestones)
 
 
 class StudentTrainer(Inc_Learning_Appr):
     def __init__(self, model, model_new, model_old, device, nepochs=160, lr=0.1, lr_min=1e-4, lr_factor=10,
-                 lr_patience=8, clipgrad=10000, momentum=0.9, wd=5e-4, multi_softmax=False, wu_nepochs=0,
-                 wu_lr=1e-1, wu_fix_bn=False, wu_scheduler='constant', wu_patience=None, fix_bn=False,
+                 lr_patience=8, clipgrad=10000, momentum=0.9, wd=5e-4, multi_softmax=False,fix_bn=False,
                  eval_on_train=False, select_best_model_by_val_loss=True, logger=None, scheduler_milestones=None,
                  dd_loss_correction=False):
         super(StudentTrainer, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad,
-                                             momentum, wd, multi_softmax, wu_nepochs, wu_lr, wu_fix_bn, wu_scheduler,
-                                             wu_patience, fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
+                                             momentum, wd, multi_softmax,  fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
                                              None, scheduler_milestones)
 
         self.model_old = model_old
