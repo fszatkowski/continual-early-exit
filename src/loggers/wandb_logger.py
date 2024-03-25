@@ -3,13 +3,13 @@ import os
 from typing import List, Optional
 
 import seaborn as sns
+import wandb
 from matplotlib import pyplot as plt
 from PIL import Image
 
-import wandb
 from loggers.exp_logger import ExperimentLogger
 
-os.environ['WANDB_START_METHOD'] = 'thread'
+os.environ["WANDB_START_METHOD"] = "thread"
 
 
 class Logger(ExperimentLogger):
@@ -17,10 +17,10 @@ class Logger(ExperimentLogger):
     Assumes prior wandb login (wandb login)"""
 
     def __init__(
-            self,
-            exp_path: str,
-            exp_name: Optional[str] = None,
-            tags: Optional[List[str]] = None,
+        self,
+        exp_path: str,
+        exp_name: Optional[str] = None,
+        tags: Optional[List[str]] = None,
     ):
         super(Logger, self).__init__(exp_path, exp_name)
 
@@ -75,7 +75,9 @@ class Logger(ExperimentLogger):
         else:
             cmap = None
 
-        plot = sns.heatmap(array, annot=annot, cmap=cmap, cbar=cbar, vmin=vmin, vmax=vmax)
+        plot = sns.heatmap(
+            array, annot=annot, cmap=cmap, cbar=cbar, vmin=vmin, vmax=vmax
+        )
 
         if "title" in kwargs:
             plot.set_title(kwargs["title"])

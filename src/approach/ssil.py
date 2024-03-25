@@ -1,41 +1,83 @@
 import warnings
-import torch
-from copy import deepcopy
 from argparse import ArgumentParser
+from copy import deepcopy
+
+import torch
 import torch.nn.functional as F
 
-from .incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
+
+from .incremental_learning import Inc_Learning_Appr
 
 
 class Appr(Inc_Learning_Appr):
     """Class implementing the SS-IL : Separated Softmax for Incremental Learning approach
     described in:
     https://openaccess.thecvf.com/content/ICCV2021/papers/Ahn_SS-IL_Separated_Softmax_for_Incremental_Learning_ICCV_2021_paper.pdf
-    
-    Code: https://github.com/hongjoon0805/SS-IL-Official/blob/master/trainer/ssil.py 
+
+    Code: https://github.com/hongjoon0805/SS-IL-Official/blob/master/trainer/ssil.py
     """
-    def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False,fix_bn=False, eval_on_train=False,
-                 select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
-                 lamb=1, T=2, replay_batch_size=32,
-                 ):
-        super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, fix_bn, eval_on_train,
-                                   select_best_model_by_val_loss, logger, exemplars_dataset, scheduler_milestones)
+
+    def __init__(
+        self,
+        model,
+        device,
+        nepochs=100,
+        lr=0.05,
+        lr_min=1e-4,
+        lr_factor=3,
+        lr_patience=5,
+        clipgrad=10000,
+        momentum=0,
+        wd=0,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        lamb=1,
+        T=2,
+        replay_batch_size=32,
+    ):
+        super(Appr, self).__init__(
+            model,
+            device,
+            nepochs,
+            lr,
+            lr_min,
+            lr_factor,
+            lr_patience,
+            clipgrad,
+            momentum,
+            wd,
+            multi_softmax,
+            fix_bn,
+            eval_on_train,
+            select_best_model_by_val_loss,
+            logger,
+            exemplars_dataset,
+            scheduler_milestones,
+        )
         self.model_old = None
         self.lamb = lamb
         self.T = T
         self.replay_batch_size = replay_batch_size
 
-        self.loss = torch.nn.CrossEntropyLoss(reduction='sum')
-        
+        self.loss = torch.nn.CrossEntropyLoss(reduction="sum")
+
         # SSIL is expected to be used with exemplars. If needed to be used without exemplars, overwrite here the
         # `_get_optimizer` function with the one in LwF and update the criterion
-        have_exemplars = self.exemplars_dataset.max_num_exemplars + self.exemplars_dataset.max_num_exemplars_per_class
+        have_exemplars = (
+            self.exemplars_dataset.max_num_exemplars
+            + self.exemplars_dataset.max_num_exemplars_per_class
+        )
         if not have_exemplars:
-            warnings.warn("Warning: SS-IL is expected to use exemplars. Check documentation.")
-    
+            warnings.warn(
+                "Warning: SS-IL is expected to use exemplars. Check documentation."
+            )
+
     @staticmethod
     def exemplars_dataset_class():
         return ExemplarsDataset
@@ -44,18 +86,35 @@ class Appr(Inc_Learning_Appr):
     def extra_parser(args):
         """Returns a parser containing the approach specific parameters"""
         parser = ArgumentParser()
-        parser.add_argument('--lamb', default=1, type=float, required=False,
-                            help='Forgetting-intransigence trade-off (default=%(default)s)')
-        parser.add_argument('--T', default=2, type=int, required=False,
-                            help='Temperature scaling (default=%(default)s)')
-        parser.add_argument('--replay-batch-size', default=32, type=int, required=False,
-                            help='Replay batch size (default=%(default)s)')
+        parser.add_argument(
+            "--lamb",
+            default=1,
+            type=float,
+            required=False,
+            help="Forgetting-intransigence trade-off (default=%(default)s)",
+        )
+        parser.add_argument(
+            "--T",
+            default=2,
+            type=int,
+            required=False,
+            help="Temperature scaling (default=%(default)s)",
+        )
+        parser.add_argument(
+            "--replay-batch-size",
+            default=32,
+            type=int,
+            required=False,
+            help="Replay batch size (default=%(default)s)",
+        )
 
         return parser.parse_known_args(args)
 
     def _get_optimizer(self):
         params = self.model.parameters()
-        return torch.optim.SGD(params, lr=self.lr, weight_decay=self.wd, momentum=self.momentum)
+        return torch.optim.SGD(
+            params, lr=self.lr, weight_decay=self.wd, momentum=self.momentum
+        )
 
     def train_loop(self, t, trn_loader, val_loader):
         """Contains the epochs loop"""
@@ -64,12 +123,16 @@ class Appr(Inc_Learning_Appr):
         super().train_loop(t, trn_loader, val_loader)
 
         # EXEMPLAR MANAGEMENT -- select training subset
-        exemplar_selection_loader = torch.utils.data.DataLoader(trn_loader.dataset + self.exemplars_dataset,
-                                                     batch_size=trn_loader.batch_size,
-                                                     shuffle=True,
-                                                     num_workers=trn_loader.num_workers,
-                                                     pin_memory=trn_loader.pin_memory)
-        self.exemplars_dataset.collect_exemplars(self.model, exemplar_selection_loader, val_loader.dataset.transform)
+        exemplar_selection_loader = torch.utils.data.DataLoader(
+            trn_loader.dataset + self.exemplars_dataset,
+            batch_size=trn_loader.batch_size,
+            shuffle=True,
+            num_workers=trn_loader.num_workers,
+            pin_memory=trn_loader.pin_memory,
+        )
+        self.exemplars_dataset.collect_exemplars(
+            self.model, exemplar_selection_loader, val_loader.dataset.transform
+        )
 
     def post_train_process(self, t, trn_loader):
         """Runs after training all the epochs of the task (after the train session)"""
@@ -78,28 +141,33 @@ class Appr(Inc_Learning_Appr):
         self.model_old.eval()
         self.model_old.freeze_all()
 
-    def train_epoch(self, t, trn_loader):        
-        
+    def train_epoch(self, t, trn_loader):
+
         if t > 0:
-            exemplar_loader = torch.utils.data.DataLoader(self.exemplars_dataset,
-                                                     batch_size=self.replay_batch_size,
-                                                     shuffle=True,
-                                                     num_workers=trn_loader.num_workers,
-                                                     pin_memory=trn_loader.pin_memory,
-                                                     drop_last=True
-                                                     )
+            exemplar_loader = torch.utils.data.DataLoader(
+                self.exemplars_dataset,
+                batch_size=self.replay_batch_size,
+                shuffle=True,
+                num_workers=trn_loader.num_workers,
+                pin_memory=trn_loader.pin_memory,
+                drop_last=True,
+            )
             trn_loader = zip(trn_loader, exemplar_loader)
-        
+
         self.model.train()
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
-        
-        for samples in trn_loader:            
+
+        for samples in trn_loader:
             if t > 0:
                 (data, target), (data_r, target_r) = samples
-                data, data_r = data.to(self.device, non_blocking=True), data_r.to(self.device, non_blocking=True)
-                data = torch.cat((data,data_r))
-                target, target_r = target.to(self.device, non_blocking=True), target_r.to(self.device, non_blocking=True)
+                data, data_r = data.to(self.device, non_blocking=True), data_r.to(
+                    self.device, non_blocking=True
+                )
+                data = torch.cat((data, data_r))
+                target, target_r = target.to(
+                    self.device, non_blocking=True
+                ), target_r.to(self.device, non_blocking=True)
                 # Forward old model
                 targets_old = self.model_old(data.to(self.device, non_blocking=True))
             else:
@@ -123,10 +191,14 @@ class Appr(Inc_Learning_Appr):
         loss_KD = 0
         batch_size = len(target)
         replay_size = len(target_r) if target_r is not None else 0
-        loss_CE_curr = self.loss(outputs[t][:batch_size], target - self.model.task_offset[t])
+        loss_CE_curr = self.loss(
+            outputs[t][:batch_size], target - self.model.task_offset[t]
+        )
 
         if t > 0 and target_r is not None:
-            prev = torch.cat([o[batch_size:batch_size+replay_size] for o in outputs[:t]], dim=1)
+            prev = torch.cat(
+                [o[batch_size : batch_size + replay_size] for o in outputs[:t]], dim=1
+            )
             loss_CE_prev = self.loss(prev, target_r)
             loss_CE = (loss_CE_curr + loss_CE_prev) / (batch_size + replay_size)
 
@@ -135,9 +207,11 @@ class Appr(Inc_Learning_Appr):
             for _t in range(t):
                 soft_target = F.softmax(outputs_old[_t] / self.T, dim=1)
                 output_log = F.log_softmax(outputs[_t] / self.T, dim=1)
-                loss_KD[_t] = F.kl_div(output_log, soft_target, reduction='batchmean') * (self.T**2)
+                loss_KD[_t] = F.kl_div(
+                    output_log, soft_target, reduction="batchmean"
+                ) * (self.T**2)
             loss_KD = loss_KD.sum()
         else:
             loss_CE = loss_CE_curr / batch_size
-        
+
         return loss_CE + self.lamb * loss_KD

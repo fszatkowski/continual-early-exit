@@ -1,12 +1,14 @@
-import torch
 import pytest
+import torch
 
 from tests import run_main_and_assert
 
-FAST_LOCAL_TEST_ARGS = "--exp-name local_test --datasets mnist" \
-                       " --network LeNet --num-tasks 3 --seed 1 --batch-size 32" \
-                       " --nepochs 2 --lr-factor 10 --momentum 0.9 --lr-min 1e-7" \
-                       " --num-workers 0"
+FAST_LOCAL_TEST_ARGS = (
+    "--exp-name local_test --datasets mnist"
+    " --network LeNet --num-tasks 3 --seed 1 --batch-size 32"
+    " --nepochs 2 --lr-factor 10 --momentum 0.9 --lr-min 1e-7"
+    " --num-workers 0"
+)
 
 
 def test_finetuning_without_exemplars():
@@ -81,7 +83,9 @@ def test_finetuning_with_no_cudnn_deterministic():
 
 def test_finetuning_with_multiple_datasets():
     args_line = FAST_LOCAL_TEST_ARGS
-    args_line.replace("--datasets mnist", "--datasets mnist mnist mnist --max-classes-per-dataset 3")
+    args_line.replace(
+        "--datasets mnist", "--datasets mnist mnist mnist --max-classes-per-dataset 3"
+    )
     run_main_and_assert(args_line)
 
 

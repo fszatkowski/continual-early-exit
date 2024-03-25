@@ -1,11 +1,13 @@
 import torch.nn as nn
 
-__all__ = ['resnet32_ln']
+__all__ = ["resnet32_ln"]
 
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
+    return nn.Conv2d(
+        in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
+    )
 
 
 class BasicBlock(nn.Module):
@@ -52,11 +54,11 @@ class ResNet(nn.Module):
         # last classifier layer (head) with as many outputs as classes
         self.fc = nn.Linear(64 * block.expansion, num_classes)
         # and `head_var` with the name of the head, so it can be removed when doing incremental learning experiments
-        self.head_var = 'fc'
+        self.head_var = "fc"
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.LayerNorm):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -64,9 +66,13 @@ class ResNet(nn.Module):
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = Downsample(self.inplanes, planes * block.expansion, stride=stride)
+            downsample = Downsample(
+                self.inplanes, planes * block.expansion, stride=stride
+            )
         layers = []
-        _block = block(self.inplanes, planes, stride, downsample, in_shape=self.working_shape)
+        _block = block(
+            self.inplanes, planes, stride, downsample, in_shape=self.working_shape
+        )
         layers.append(_block)
         self.working_shape = _block.output_shape
         self.inplanes = planes * block.expansion

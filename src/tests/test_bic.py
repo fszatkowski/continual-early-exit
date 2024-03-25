@@ -1,10 +1,12 @@
 from tests import run_main_and_assert
 
-FAST_LOCAL_TEST_ARGS = "--exp-name local_test --datasets mnist" \
-                       " --network LeNet --num-tasks 3 --seed 1 --batch-size 32" \
-                       " --nepochs 3" \
-                       " --num-workers 0" \
-                       " --approach bic"
+FAST_LOCAL_TEST_ARGS = (
+    "--exp-name local_test --datasets mnist"
+    " --network LeNet --num-tasks 3 --seed 1 --batch-size 32"
+    " --nepochs 3"
+    " --num-workers 0"
+    " --approach bic"
+)
 
 
 def test_bic_exemplars():
@@ -24,4 +26,3 @@ def test_bic_exemplars_per_class():
     args_line = FAST_LOCAL_TEST_ARGS
     args_line += " --num-exemplars-per-class 20"
     run_main_and_assert(args_line)
-

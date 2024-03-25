@@ -1,9 +1,11 @@
 from tests import run_main_and_assert
 
-FAST_LOCAL_TEST_ARGS = "--exp-name local_test --datasets mnist" \
-                       " --network LeNet --num-tasks 3 --seed 1 --batch-size 32" \
-                       " --nepochs 2 --lr-factor 10 --momentum 0.9 --lr-min 1e-7" \
-                       " --num-workers 0 --fix-bn"
+FAST_LOCAL_TEST_ARGS = (
+    "--exp-name local_test --datasets mnist"
+    " --network LeNet --num-tasks 3 --seed 1 --batch-size 32"
+    " --nepochs 2 --lr-factor 10 --momentum 0.9 --lr-min 1e-7"
+    " --num-workers 0 --fix-bn"
+)
 
 
 def test_finetuning_fix_bn():

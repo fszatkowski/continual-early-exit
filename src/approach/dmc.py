@@ -1,27 +1,63 @@
+from argparse import ArgumentParser
+from copy import deepcopy
+
 import torch
 from torch import nn
-from copy import deepcopy
-from argparse import ArgumentParser
 
 from datasets.data_loader import get_loaders
-from .incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
+
+from .incremental_learning import Inc_Learning_Appr
 
 
 class Appr(Inc_Learning_Appr):
-    """ Class implementing the Deep Model Consolidation (DMC) approach
+    """Class implementing the Deep Model Consolidation (DMC) approach
     described in https://arxiv.org/abs/1903.07864
     Original code available at https://github.com/juntingzh/incremental-learning-baselines
     """
 
-    def __init__(self, model, device, nepochs=160, lr=0.1, lr_min=1e-4, lr_factor=10, lr_patience=8, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
-                 select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
-                 aux_dataset='imagenet_32', aux_batch_size=128, dd_loss_correction=False):
-        super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, fix_bn,
-                                   eval_on_train, select_best_model_by_val_loss,
-                                   logger, exemplars_dataset, scheduler_milestones)
+    def __init__(
+        self,
+        model,
+        device,
+        nepochs=160,
+        lr=0.1,
+        lr_min=1e-4,
+        lr_factor=10,
+        lr_patience=8,
+        clipgrad=10000,
+        momentum=0,
+        wd=0,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        aux_dataset="imagenet_32",
+        aux_batch_size=128,
+        dd_loss_correction=False,
+    ):
+        super(Appr, self).__init__(
+            model,
+            device,
+            nepochs,
+            lr,
+            lr_min,
+            lr_factor,
+            lr_patience,
+            clipgrad,
+            momentum,
+            wd,
+            multi_softmax,
+            fix_bn,
+            eval_on_train,
+            select_best_model_by_val_loss,
+            logger,
+            exemplars_dataset,
+            scheduler_milestones,
+        )
         self.model_old = None
         self.model_new = None
         self.aux_dataset = aux_dataset
@@ -29,19 +65,29 @@ class Appr(Inc_Learning_Appr):
         self.dd_loss_correction = dd_loss_correction
 
         # get dataloader for auxiliar dataset
-        aux_trn_ldr, _, aux_val_ldr, _ = get_loaders([self.aux_dataset], num_tasks=1,
-                                                     nc_first_task=None,
-                                                     nc_per_task=None, validation=0,
-                                                     batch_size=self.aux_batch_size, num_workers=4,
-                                                     # TODO this is just temporary to check if the method works
-                                                     max_examples_per_class_trn=50,
-                                                     max_examples_per_class_val=10,
-                                                     pin_memory=False)
+        aux_trn_ldr, _, aux_val_ldr, _ = get_loaders(
+            [self.aux_dataset],
+            num_tasks=1,
+            nc_first_task=None,
+            nc_per_task=None,
+            validation=0,
+            batch_size=self.aux_batch_size,
+            num_workers=4,
+            # TODO this is just temporary to check if the method works
+            max_examples_per_class_trn=50,
+            max_examples_per_class_val=10,
+            pin_memory=False,
+        )
         self.aux_trn_loader = aux_trn_ldr[0]
         self.aux_val_loader = aux_val_ldr[0]
         # Since an auxiliary dataset is available, using exemplars could be redundant
-        have_exemplars = self.exemplars_dataset.max_num_exemplars + self.exemplars_dataset.max_num_exemplars_per_class
-        assert (have_exemplars == 0), 'Warning: DMC does not use exemplars. Comment this line to force it.'
+        have_exemplars = (
+            self.exemplars_dataset.max_num_exemplars
+            + self.exemplars_dataset.max_num_exemplars_per_class
+        )
+        assert (
+            have_exemplars == 0
+        ), "Warning: DMC does not use exemplars. Comment this line to force it."
 
     @staticmethod
     def exemplars_dataset_class():
@@ -52,23 +98,41 @@ class Appr(Inc_Learning_Appr):
         """Returns a parser containing the approach specific parameters"""
         parser = ArgumentParser()
         # Sec. 4.2.1 "We use ImageNet32x32 dataset as the source for auxiliary data in the model consolidation stage."
-        parser.add_argument('--aux-dataset', default='imagenet_32_reduced', type=str, required=False,
-                            help='Auxiliary dataset (default=%(default)s)')
-        parser.add_argument('--aux-batch-size', default=128, type=int, required=False,
-                            help='Batch size for auxiliary dataset (default=%(default)s)')
-        parser.add_argument('--dd-loss-correction', default=False, action='store_true',
-                            help='If we want to use the version of dual distillation loss described in DMC paper '
-                                 'instead of the FACIL implementation (default=%(default)s)')
+        parser.add_argument(
+            "--aux-dataset",
+            default="imagenet_32_reduced",
+            type=str,
+            required=False,
+            help="Auxiliary dataset (default=%(default)s)",
+        )
+        parser.add_argument(
+            "--aux-batch-size",
+            default=128,
+            type=int,
+            required=False,
+            help="Batch size for auxiliary dataset (default=%(default)s)",
+        )
+        parser.add_argument(
+            "--dd-loss-correction",
+            default=False,
+            action="store_true",
+            help="If we want to use the version of dual distillation loss described in DMC paper "
+            "instead of the FACIL implementation (default=%(default)s)",
+        )
         return parser.parse_known_args(args)
 
     def _get_optimizer(self):
         """Returns the optimizer"""
         if len(self.exemplars_dataset) == 0 and len(self.model.heads) > 1:
             # if there are no exemplars, previous heads are not modified
-            params = list(self.model.model.parameters()) + list(self.model.heads[-1].parameters())
+            params = list(self.model.model.parameters()) + list(
+                self.model.heads[-1].parameters()
+            )
         else:
             params = self.model.parameters()
-        return torch.optim.SGD(params, lr=self.lr, weight_decay=self.wd, momentum=self.momentum)
+        return torch.optim.SGD(
+            params, lr=self.lr, weight_decay=self.wd, momentum=self.momentum
+        )
 
     def pre_train_process(self, t, trn_loader):
         """Runs before training all epochs of the task (before the train session)"""
@@ -92,23 +156,39 @@ class Appr(Inc_Learning_Appr):
         """Contains the epochs loop"""
         if t > 0:
             # Args for the new data trainer and for the student trainer are the same
-            dmc_args = dict(nepochs=self.nepochs, lr=self.lr, lr_min=self.lr_min, lr_factor=self.lr_factor,
-                            lr_patience=self.lr_patience, clipgrad=self.clipgrad, momentum=self.momentum,
-                            wd=self.wd, multi_softmax=self.multi_softmax, fix_bn=self.fix_bn,
-                            select_best_model_by_val_loss=self.select_best_model_by_val_loss,
-                            eval_on_train=self.eval_on_train, logger=self.logger,
-                            scheduler_milestones=self.scheduler_milestones)
+            dmc_args = dict(
+                nepochs=self.nepochs,
+                lr=self.lr,
+                lr_min=self.lr_min,
+                lr_factor=self.lr_factor,
+                lr_patience=self.lr_patience,
+                clipgrad=self.clipgrad,
+                momentum=self.momentum,
+                wd=self.wd,
+                multi_softmax=self.multi_softmax,
+                fix_bn=self.fix_bn,
+                select_best_model_by_val_loss=self.select_best_model_by_val_loss,
+                eval_on_train=self.eval_on_train,
+                logger=self.logger,
+                scheduler_milestones=self.scheduler_milestones,
+            )
             # Train new model in new data
             new_trainer = NewTaskTrainer(self.model_new, self.device, **dmc_args)
             new_trainer.train_loop(t, trn_loader, val_loader)
             self.model_new.eval()
             self.model_new.freeze_all()
-            print('=' * 108)
+            print("=" * 108)
             print("Training of student")
-            print('=' * 108)
+            print("=" * 108)
             # Train student model using both old and new model
-            student_trainer = StudentTrainer(self.model, self.model_new, self.model_old, self.device,
-                                             dd_loss_correction=self.dd_loss_correction, **dmc_args)
+            student_trainer = StudentTrainer(
+                self.model,
+                self.model_new,
+                self.model_old,
+                self.device,
+                dd_loss_correction=self.dd_loss_correction,
+                **dmc_args
+            )
             student_trainer.train_loop(t, self.aux_trn_loader, self.aux_val_loader)
         else:
             # FINETUNING TRAINING -- contains the epochs loop
@@ -124,22 +204,88 @@ class Appr(Inc_Learning_Appr):
 
 
 class NewTaskTrainer(Inc_Learning_Appr):
-    def __init__(self, model, device, nepochs=160, lr=0.1, lr_min=1e-4, lr_factor=10, lr_patience=8, clipgrad=10000,
-                 momentum=0.9, wd=5e-4, multi_softmax=False,fix_bn=False, eval_on_train=False,
-                 select_best_model_by_val_loss=True, logger=None, scheduler_milestones=None):
-        super(NewTaskTrainer, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad,
-                                             momentum, wd, multi_softmax, fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
-                                             None, scheduler_milestones)
+    def __init__(
+        self,
+        model,
+        device,
+        nepochs=160,
+        lr=0.1,
+        lr_min=1e-4,
+        lr_factor=10,
+        lr_patience=8,
+        clipgrad=10000,
+        momentum=0.9,
+        wd=5e-4,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        scheduler_milestones=None,
+    ):
+        super(NewTaskTrainer, self).__init__(
+            model,
+            device,
+            nepochs,
+            lr,
+            lr_min,
+            lr_factor,
+            lr_patience,
+            clipgrad,
+            momentum,
+            wd,
+            multi_softmax,
+            fix_bn,
+            eval_on_train,
+            select_best_model_by_val_loss,
+            logger,
+            None,
+            scheduler_milestones,
+        )
 
 
 class StudentTrainer(Inc_Learning_Appr):
-    def __init__(self, model, model_new, model_old, device, nepochs=160, lr=0.1, lr_min=1e-4, lr_factor=10,
-                 lr_patience=8, clipgrad=10000, momentum=0.9, wd=5e-4, multi_softmax=False,fix_bn=False,
-                 eval_on_train=False, select_best_model_by_val_loss=True, logger=None, scheduler_milestones=None,
-                 dd_loss_correction=False):
-        super(StudentTrainer, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad,
-                                             momentum, wd, multi_softmax,  fix_bn, eval_on_train, select_best_model_by_val_loss, logger,
-                                             None, scheduler_milestones)
+    def __init__(
+        self,
+        model,
+        model_new,
+        model_old,
+        device,
+        nepochs=160,
+        lr=0.1,
+        lr_min=1e-4,
+        lr_factor=10,
+        lr_patience=8,
+        clipgrad=10000,
+        momentum=0.9,
+        wd=5e-4,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        scheduler_milestones=None,
+        dd_loss_correction=False,
+    ):
+        super(StudentTrainer, self).__init__(
+            model,
+            device,
+            nepochs,
+            lr,
+            lr_min,
+            lr_factor,
+            lr_patience,
+            clipgrad,
+            momentum,
+            wd,
+            multi_softmax,
+            fix_bn,
+            eval_on_train,
+            select_best_model_by_val_loss,
+            logger,
+            None,
+            scheduler_milestones,
+        )
 
         self.model_old = model_old
         self.model_new = model_new
@@ -200,8 +346,10 @@ class StudentTrainer(Inc_Learning_Appr):
                 targets_old -= targets_old.mean(1).unsqueeze(1)
                 targets_new -= targets_new.mean(1).unsqueeze(1)
 
-                targets = torch.cat([targets_old, + targets_new], dim=1)
+                targets = torch.cat([targets_old, +targets_new], dim=1)
             else:
                 raise NotImplementedError()
         # Eq. 3: Double Distillation Loss
-        return torch.nn.functional.mse_loss(torch.cat(outputs, dim=1), targets.detach(), reduction='mean')
+        return torch.nn.functional.mse_loss(
+            torch.cat(outputs, dim=1), targets.detach(), reduction="mean"
+        )

@@ -1,13 +1,15 @@
-import torch
 import warnings
-import numpy as np
-from copy import deepcopy
 from argparse import ArgumentParser
+from copy import deepcopy
+
+import numpy as np
+import torch
 from torch.utils.data import DataLoader
 
-from .incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
 from datasets.exemplars_selection import override_dataset_transform
+
+from .incremental_learning import Inc_Learning_Appr
 
 
 class Appr(Inc_Learning_Appr):
@@ -16,20 +18,59 @@ class Appr(Inc_Learning_Appr):
     Original code available at https://github.com/srebuffi/iCaRL
     """
 
-    def __init__(self, model, device, nepochs=60, lr=0.5, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0.9, wd=1e-5, multi_softmax=False, fix_bn=False,
-                 eval_on_train=False, select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None, lamb=1):
-        super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, fix_bn, eval_on_train,
-                                   select_best_model_by_val_loss, logger, exemplars_dataset, scheduler_milestones)
+    def __init__(
+        self,
+        model,
+        device,
+        nepochs=60,
+        lr=0.5,
+        lr_min=1e-4,
+        lr_factor=3,
+        lr_patience=5,
+        clipgrad=10000,
+        momentum=0.9,
+        wd=1e-5,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        lamb=1,
+    ):
+        super(Appr, self).__init__(
+            model,
+            device,
+            nepochs,
+            lr,
+            lr_min,
+            lr_factor,
+            lr_patience,
+            clipgrad,
+            momentum,
+            wd,
+            multi_softmax,
+            fix_bn,
+            eval_on_train,
+            select_best_model_by_val_loss,
+            logger,
+            exemplars_dataset,
+            scheduler_milestones,
+        )
         self.model_old = None
         self.lamb = lamb
 
         # iCaRL is expected to be used with exemplars. If needed to be used without exemplars, overwrite here the
         # `_get_optimizer` function with the one in LwF and update the criterion
-        have_exemplars = self.exemplars_dataset.max_num_exemplars + self.exemplars_dataset.max_num_exemplars_per_class
+        have_exemplars = (
+            self.exemplars_dataset.max_num_exemplars
+            + self.exemplars_dataset.max_num_exemplars_per_class
+        )
         if not have_exemplars:
-            warnings.warn("Warning: iCaRL is expected to use exemplars. Check documentation.")
+            warnings.warn(
+                "Warning: iCaRL is expected to use exemplars. Check documentation."
+            )
 
     @staticmethod
     def exemplars_dataset_class():
@@ -40,8 +81,13 @@ class Appr(Inc_Learning_Appr):
         """Returns a parser containing the approach specific parameters"""
         parser = ArgumentParser()
         # Sec. 4. " allowing iCaRL to balance between CE and distillation loss."
-        parser.add_argument('--lamb', default=1, type=float, required=False,
-                            help='Forgetting-intransigence trade-off (default=%(default)s)')
+        parser.add_argument(
+            "--lamb",
+            default=1,
+            type=float,
+            required=False,
+            help="Forgetting-intransigence trade-off (default=%(default)s)",
+        )
         return parser.parse_known_args(args)
 
     # Algorithm 1: iCaRL NCM Classify
@@ -59,7 +105,7 @@ class Appr(Inc_Learning_Appr):
         # Task-Aware Multi-Head
         num_cls = self.model.task_cls[task]
         offset = self.model.task_offset[task]
-        pred = dists[:, offset:offset + num_cls].argmin(1)
+        pred = dists[:, offset : offset + num_cls].argmin(1)
         hits_taw = (pred + offset == targets.to(self.device, non_blocking=True)).float()
         # Task-Agnostic Multi-Head
         pred = dists.argmin(1)
@@ -70,8 +116,13 @@ class Appr(Inc_Learning_Appr):
         # change transforms to evaluation for this calculation
         with override_dataset_transform(self.exemplars_dataset, transform) as _ds:
             # change dataloader so it can be fixed to go sequentially (shuffle=False), this allows to keep same order
-            icarl_loader = DataLoader(_ds, batch_size=trn_loader.batch_size, shuffle=False,
-                                      num_workers=trn_loader.num_workers, pin_memory=trn_loader.pin_memory)
+            icarl_loader = DataLoader(
+                _ds,
+                batch_size=trn_loader.batch_size,
+                shuffle=False,
+                num_workers=trn_loader.num_workers,
+                pin_memory=trn_loader.pin_memory,
+            )
             # extract features from the model for all train samples
             # Page 2: "All feature vectors are L2-normalized, and the results of any operation on feature vectors,
             # e.g. averages are also re-normalized, which we do not write explicitly to avoid a cluttered notation."
@@ -80,7 +131,9 @@ class Appr(Inc_Learning_Appr):
             with torch.no_grad():
                 self.model.eval()
                 for images, targets in icarl_loader:
-                    feats = self.model(images.to(self.device, non_blocking=True), return_features=True)[1]
+                    feats = self.model(
+                        images.to(self.device, non_blocking=True), return_features=True
+                    )[1]
                     # normalize
                     extracted_features.append(feats / feats.norm(dim=1).view(-1, 1))
                     extracted_targets.extend(targets)
@@ -105,18 +158,22 @@ class Appr(Inc_Learning_Appr):
         # Algorithm 3: iCaRL Update Representation
         # Alg. 3. "form combined training set", add exemplars to train_loader
         if t > 0:
-            trn_loader = torch.utils.data.DataLoader(trn_loader.dataset + self.exemplars_dataset,
-                                                     batch_size=trn_loader.batch_size,
-                                                     shuffle=True,
-                                                     num_workers=trn_loader.num_workers,
-                                                     pin_memory=trn_loader.pin_memory)
+            trn_loader = torch.utils.data.DataLoader(
+                trn_loader.dataset + self.exemplars_dataset,
+                batch_size=trn_loader.batch_size,
+                shuffle=True,
+                num_workers=trn_loader.num_workers,
+                pin_memory=trn_loader.pin_memory,
+            )
 
         # FINETUNING TRAINING -- contains the epochs loop
         super().train_loop(t, trn_loader, val_loader)
 
         # EXEMPLAR MANAGEMENT -- select training subset
         # Algorithm 4: iCaRL ConstructExemplarSet and Algorithm 5: iCaRL ReduceExemplarSet
-        self.exemplars_dataset.collect_exemplars(self.model, trn_loader, val_loader.dataset.transform)
+        self.exemplars_dataset.collect_exemplars(
+            self.model, trn_loader, val_loader.dataset.transform
+        )
 
         # compute mean of exemplars
         self.compute_mean_of_exemplars(trn_loader, val_loader.dataset.transform)
@@ -143,7 +200,9 @@ class Appr(Inc_Learning_Appr):
                 outputs_old = self.model_old(images.to(self.device, non_blocking=True))
             # Forward current model
             outputs = self.model(images.to(self.device, non_blocking=True))
-            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True), outputs_old)
+            loss = self.criterion(
+                t, outputs, targets.to(self.device, non_blocking=True), outputs_old
+            )
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -165,7 +224,9 @@ class Appr(Inc_Learning_Appr):
                 if t > 0:
                     outputs_old = self.model_old(images)
                 # Forward current model
-                outputs, feats = self.model(images.to(self.device, non_blocking=True), return_features=True)
+                outputs, feats = self.model(
+                    images.to(self.device, non_blocking=True), return_features=True
+                )
                 loss = self.criterion(t, outputs, targets, outputs_old)
                 # during training, the usual accuracy is computed on the outputs
                 if not self.exemplar_means:
@@ -177,7 +238,11 @@ class Appr(Inc_Learning_Appr):
                 total_acc_taw += hits_taw.sum().item()
                 total_acc_tag += hits_tag.sum().item()
                 total_num += len(targets)
-        return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
+        return (
+            total_loss / total_num,
+            total_acc_taw / total_num,
+            total_acc_tag / total_num,
+        )
 
     # Algorithm 3: classification and distillation terms -- original formulation has no trade-off parameter (lamb=1)
     def criterion(self, t, outputs, targets, outputs_old=None):
@@ -190,6 +255,8 @@ class Appr(Inc_Learning_Appr):
             # The original code does not match with the paper equation, maybe sigmoid could be removed from g
             g = torch.sigmoid(torch.cat(outputs[:t], dim=1))
             q_i = torch.sigmoid(torch.cat(outputs_old[:t], dim=1))
-            loss += self.lamb * sum(torch.nn.functional.binary_cross_entropy(g[:, y], q_i[:, y]) for y in
-                                    range(sum(self.model.task_cls[:t])))
+            loss += self.lamb * sum(
+                torch.nn.functional.binary_cross_entropy(g[:, y], q_i[:, y])
+                for y in range(sum(self.model.task_cls[:t]))
+            )
         return loss

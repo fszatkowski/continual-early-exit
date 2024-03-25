@@ -1,5 +1,5 @@
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 
 class LeNetArch(nn.Module):
@@ -16,7 +16,7 @@ class LeNetArch(nn.Module):
         # last classifier layer (head) with as many outputs as classes
         self.fc = nn.Linear(84, num_classes)
         # and `head_var` with the name of the head, so it can be removed when doing incremental learning experiments
-        self.head_var = 'fc'
+        self.head_var = "fc"
 
     def forward(self, x):
         out = F.relu(self.conv1(x))

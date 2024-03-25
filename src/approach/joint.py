@@ -1,39 +1,84 @@
-import torch
 from argparse import ArgumentParser
+
+import torch
 from torch.utils.data import DataLoader, Dataset
 
-from .incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
+
+from .incremental_learning import Inc_Learning_Appr
 
 
 class Appr(Inc_Learning_Appr):
     """Class implementing the joint baseline"""
 
-    def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
-                 momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
-                 select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
-                 freeze_after=-1):
-        super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
-                                   multi_softmax, fix_bn, eval_on_train,
-                                   select_best_model_by_val_loss, logger, exemplars_dataset, scheduler_milestones)
+    def __init__(
+        self,
+        model,
+        device,
+        nepochs=100,
+        lr=0.05,
+        lr_min=1e-4,
+        lr_factor=3,
+        lr_patience=5,
+        clipgrad=10000,
+        momentum=0,
+        wd=0,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        freeze_after=-1,
+    ):
+        super(Appr, self).__init__(
+            model,
+            device,
+            nepochs,
+            lr,
+            lr_min,
+            lr_factor,
+            lr_patience,
+            clipgrad,
+            momentum,
+            wd,
+            multi_softmax,
+            fix_bn,
+            eval_on_train,
+            select_best_model_by_val_loss,
+            logger,
+            exemplars_dataset,
+            scheduler_milestones,
+        )
         self.trn_datasets = []
         self.val_datasets = []
         self.freeze_after = freeze_after
 
-        have_exemplars = self.exemplars_dataset.max_num_exemplars + self.exemplars_dataset.max_num_exemplars_per_class
-        assert (have_exemplars == 0), 'Warning: Joint does not use exemplars. Comment this line to force it.'
+        have_exemplars = (
+            self.exemplars_dataset.max_num_exemplars
+            + self.exemplars_dataset.max_num_exemplars_per_class
+        )
+        assert (
+            have_exemplars == 0
+        ), "Warning: Joint does not use exemplars. Comment this line to force it."
 
     @staticmethod
     def exemplars_dataset_class():
         return ExemplarsDataset
-        
+
     @staticmethod
     def extra_parser(args):
         """Returns a parser containing the approach specific parameters"""
         parser = ArgumentParser()
-        parser.add_argument('--freeze-after', default=-1, type=int, required=False,
-                            help='Freeze model except heads after the specified task'
-                                 '(-1: normal Incremental Joint Training, no freeze) (default=%(default)s)')
+        parser.add_argument(
+            "--freeze-after",
+            default=-1,
+            type=int,
+            required=False,
+            help="Freeze model except heads after the specified task"
+            "(-1: normal Incremental Joint Training, no freeze) (default=%(default)s)",
+        )
         return parser.parse_known_args(args)
 
     def post_train_process(self, t, trn_loader):
@@ -52,16 +97,20 @@ class Appr(Inc_Learning_Appr):
         self.val_datasets.append(val_loader.dataset)
         trn_dset = JointDataset(self.trn_datasets)
         val_dset = JointDataset(self.val_datasets)
-        trn_loader = DataLoader(trn_dset,
-                                batch_size=trn_loader.batch_size,
-                                shuffle=True,
-                                num_workers=trn_loader.num_workers,
-                                pin_memory=trn_loader.pin_memory)
-        val_loader = DataLoader(val_dset,
-                                batch_size=val_loader.batch_size,
-                                shuffle=False,
-                                num_workers=val_loader.num_workers,
-                                pin_memory=val_loader.pin_memory)
+        trn_loader = DataLoader(
+            trn_dset,
+            batch_size=trn_loader.batch_size,
+            shuffle=True,
+            num_workers=trn_loader.num_workers,
+            pin_memory=trn_loader.pin_memory,
+        )
+        val_loader = DataLoader(
+            val_dset,
+            batch_size=val_loader.batch_size,
+            shuffle=False,
+            num_workers=val_loader.num_workers,
+            pin_memory=val_loader.pin_memory,
+        )
         # continue training as usual
         super().train_loop(t, trn_loader, val_loader)
 
@@ -78,7 +127,9 @@ class Appr(Inc_Learning_Appr):
         for images, targets in trn_loader:
             # Forward current model
             outputs = self.model(images.to(self.device, non_blocking=True))
-            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True))
+            loss = self.criterion(
+                t, outputs, targets.to(self.device, non_blocking=True)
+            )
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -100,7 +151,7 @@ class JointDataset(Dataset):
         self._len = sum([len(d) for d in self.datasets])
 
     def __len__(self):
-        'Denotes the total number of samples'
+        "Denotes the total number of samples"
         return self._len
 
     def __getitem__(self, index):

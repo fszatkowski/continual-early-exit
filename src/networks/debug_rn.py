@@ -1,6 +1,6 @@
 import torch
 
-from networks import resnet32, resnet32_no_bn, resnet32_ln
+from networks import resnet32, resnet32_ln, resnet32_no_bn
 
 if __name__ == "__main__":
     resnet_standard = resnet32()

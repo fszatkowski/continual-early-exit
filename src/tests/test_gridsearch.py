@@ -1,10 +1,12 @@
 from tests import run_main_and_assert
 
-FAST_LOCAL_TEST_ARGS = "--exp-name local_test --datasets mnist" \
-                       " --network LeNet --num-tasks 3 --seed 1 --batch-size 32" \
-                       " --nepochs 3 --num-workers 0" \
-                       " --gridsearch-tasks 3 --gridsearch-config gridsearch_config" \
-                       " --gridsearch-acc-drop-thr 0.2 --gridsearch-hparam-decay 0.5"
+FAST_LOCAL_TEST_ARGS = (
+    "--exp-name local_test --datasets mnist"
+    " --network LeNet --num-tasks 3 --seed 1 --batch-size 32"
+    " --nepochs 3 --num-workers 0"
+    " --gridsearch-tasks 3 --gridsearch-config gridsearch_config"
+    " --gridsearch-acc-drop-thr 0.2 --gridsearch-hparam-decay 0.5"
+)
 
 
 def test_gridsearch_finetuning():
