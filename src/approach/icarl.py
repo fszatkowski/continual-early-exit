@@ -60,10 +60,10 @@ class Appr(Inc_Learning_Appr):
         num_cls = self.model.task_cls[task]
         offset = self.model.task_offset[task]
         pred = dists[:, offset:offset + num_cls].argmin(1)
-        hits_taw = (pred + offset == targets.to(self.device)).float()
+        hits_taw = (pred + offset == targets.to(self.device, non_blocking=True)).float()
         # Task-Agnostic Multi-Head
         pred = dists.argmin(1)
-        hits_tag = (pred == targets.to(self.device)).float()
+        hits_tag = (pred == targets.to(self.device, non_blocking=True)).float()
         return hits_taw, hits_tag
 
     def compute_mean_of_exemplars(self, trn_loader, transform):
@@ -80,7 +80,7 @@ class Appr(Inc_Learning_Appr):
             with torch.no_grad():
                 self.model.eval()
                 for images, targets in icarl_loader:
-                    feats = self.model(images.to(self.device), return_features=True)[1]
+                    feats = self.model(images.to(self.device, non_blocking=True), return_features=True)[1]
                     # normalize
                     extracted_features.append(feats / feats.norm(dim=1).view(-1, 1))
                     extracted_targets.extend(targets)
@@ -140,10 +140,10 @@ class Appr(Inc_Learning_Appr):
             # Forward old model
             outputs_old = None
             if t > 0:
-                outputs_old = self.model_old(images.to(self.device))
+                outputs_old = self.model_old(images.to(self.device, non_blocking=True))
             # Forward current model
-            outputs = self.model(images.to(self.device))
-            loss = self.criterion(t, outputs, targets.to(self.device), outputs_old)
+            outputs = self.model(images.to(self.device, non_blocking=True))
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True), outputs_old)
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -158,13 +158,15 @@ class Appr(Inc_Learning_Appr):
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 # Forward old model
                 outputs_old = None
                 if t > 0:
-                    outputs_old = self.model_old(images.to(self.device))
+                    outputs_old = self.model_old(images)
                 # Forward current model
-                outputs, feats = self.model(images.to(self.device), return_features=True)
-                loss = self.criterion(t, outputs, targets.to(self.device), outputs_old)
+                outputs, feats = self.model(images.to(self.device, non_blocking=True), return_features=True)
+                loss = self.criterion(t, outputs, targets, outputs_old)
                 # during training, the usual accuracy is computed on the outputs
                 if not self.exemplar_means:
                     hits_taw, hits_tag = self.calculate_metrics(outputs, targets)

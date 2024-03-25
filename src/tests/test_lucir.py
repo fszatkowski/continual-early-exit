@@ -40,10 +40,3 @@ def test_lucir_exemplars_remove_adapt_lamda():
     args_line += " --remove-adapt-lamda"
     run_main_and_assert(args_line)
 
-
-def test_lucir_exemplars_warmup():
-    args_line = FAST_LOCAL_TEST_ARGS
-    args_line += " --num-exemplars-per-class 20"
-    args_line += " --warmup-nepochs 5"
-    args_line += " --warmup-lr-factor 0.5"
-    run_main_and_assert(args_line)

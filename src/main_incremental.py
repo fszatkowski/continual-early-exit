@@ -163,7 +163,7 @@ def main(argv=None):
     # Multiple gpus
     # if torch.cuda.device_count() > 1:
     #     self.C = torch.nn.DataParallel(C)
-    #     self.C.to(self.device)
+    #     self.C.to(self.device, non_blocking=True)
     ####################################################################################################################
 
     # Args -- Network

@@ -20,7 +20,6 @@ class Appr(Inc_Learning_Appr):
                  momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  beta=1.0, gamma=1.0, gradcam_layer='layer3', log_gradcam_samples=0,
-                 ta=False,
                  debug_loss=False
                  ):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
@@ -34,8 +33,6 @@ class Appr(Inc_Learning_Appr):
         self.model_old = None
         self._samples_to_log_X = []
         self._samples_to_log_y = []
-
-        self.ta = ta
 
         self.debug_loss = debug_loss
 
@@ -56,10 +53,6 @@ class Appr(Inc_Learning_Appr):
                             help='Which layer take for GradCAM calculations (default=%(default)s)')
         parser.add_argument('--log-gradcam-samples', default=0, type=int,
                             help='How many examples of GradCAM to log (default=%(default)s)')
-
-        parser.add_argument('--ta', default=False, action='store_true', required=False,
-                            help='Teacher adaptation. If set, will update old model batch norm params '
-                                 'during training the new task. (default=%(default)s)')
 
         parser.add_argument('--debug-loss', default=False, action='store_true', required=False,
                             help='If set, will log intermediate loss values. (default=%(default)s)')
@@ -98,7 +91,7 @@ class Appr(Inc_Learning_Appr):
             for X in self._samples_to_log_X:
                 img_with_heatmaps = []
                 for x in X:
-                    heatmap = gradcam(x.to(self.device))
+                    heatmap = gradcam(x.to(self.device, non_blocking=True))
                     img = gradcam.visualize_cam(heatmap, x)
                     img = img.view([1] + list(img.size()))
                     img_with_heatmaps.append(img)
@@ -137,9 +130,9 @@ class Appr(Inc_Learning_Appr):
         # Do training with distillation losses
         with GradCAM(self.model_old, self.gradcam_layer) as gradcam_old:
             for images, targets in trn_loader:
-                images, targets = images.to(self.device), targets.to(self.device)
+                images, targets = images.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
                 # Forward old model
-                attmap_old, outputs_old = gradcam_old(images, return_outputs=True, adapt_bn=self.ta)
+                attmap_old, outputs_old = gradcam_old(images, return_outputs=True)
                 with GradCAM(self.model, self.gradcam_layer, retain_graph=True) as gradcam:
                     attmap = gradcam(images)  # this use eval() pass
                 self.model.zero_grad()
@@ -179,7 +172,7 @@ class Appr(Inc_Learning_Appr):
         with GradCAM(self.model, self.gradcam_layer) as gradcam, \
                 GradCAM(self.model_old, self.gradcam_layer) as gradcam_old:
             for images, targets in val_loader:
-                images, targets = images.to(self.device), targets.to(self.device)
+                images, targets = images.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
                 # Forward old model
                 attmap_old, outputs_old = gradcam_old(images, return_outputs=True)
                 # Forward current model
@@ -251,7 +244,7 @@ class GradCAM:
 
     Ref:
      - article:
-        Grad-CAM: Visual Explanations from Deep Networks 
+        Grad-CAM: Visual Explanations from Deep Networks
         via Gradient-based Localization, Selvaraju et al, ICCV, 2017
         https://arxiv.org/pdf/1610.02391.pdf
 
@@ -289,14 +282,12 @@ class GradCAM:
         self.fhandle.remove()
         self.bhandle.remove()
 
-    def __call__(self, input, class_indices=None, return_outputs=False, adapt_bn=False):
+    def __call__(self, input, class_indices=None, return_outputs=False):
         # pass input & backpropagate for selected class
         if input.dim() == 3:
             input = input.view([1] + list(input.size()))
-        if adapt_bn:
-            self.model.train()
-        else:
-            self.model.eval()
+        self.model.eval()
+
         model_output = self.model(input)
         logits = torch.cat(model_output, dim=1)
         if class_indices is None:

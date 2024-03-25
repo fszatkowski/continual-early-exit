@@ -12,8 +12,8 @@ def rand_bbox(size, lam):
     W = size[2]
     H = size[3]
     cut_rat = np.sqrt(1. - lam)
-    cut_w = np.int(W * cut_rat)
-    cut_h = np.int(H * cut_rat)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
 
     # uniform
     cx = np.random.randint(W)
@@ -128,12 +128,12 @@ class Appr(Inc_Learning_Appr):
             if do_cutmix: 
                 images, targets_a, targets_b, lamb = cutmix_data(x=images, y=targets, alpha=1.0)  # cutmix_alpha (Sec.4)
                 # Forward current model
-                outputs = self.model(images.to(self.device))
-                loss = lamb * self.criterion(t, outputs, targets_a.to(self.device))
-                loss += (1.0 - lamb) * self.criterion(t, outputs, targets_b.to(self.device))
+                outputs = self.model(images.to(self.device, non_blocking=True))
+                loss = lamb * self.criterion(t, outputs, targets_a.to(self.device, non_blocking=True))
+                loss += (1.0 - lamb) * self.criterion(t, outputs, targets_b.to(self.device, non_blocking=True))
             else:
-                outputs = self.model(images.to(self.device))
-                loss = self.criterion(t, outputs, targets.to(self.device))
+                outputs = self.model(images.to(self.device, non_blocking=True))
+                loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True))
 
             # Backward
             self.optimizer.zero_grad()

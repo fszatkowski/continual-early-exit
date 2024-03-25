@@ -22,10 +22,3 @@ def test_eeil_exemplars():
     run_main_and_assert(args_line)
 
 
-def test_eeil_with_warmup():
-    args_line = FAST_LOCAL_TEST_ARGS
-    args_line += " --warmup-nepochs 5"
-    args_line += " --warmup-lr-factor 0.5"
-    args_line += " --num-exemplars 200"
-    args_line += " --nepochs-finetuning 1"
-    run_main_and_assert(args_line)

@@ -136,14 +136,14 @@ class Appr(Inc_Learning_Appr):
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
-            images = images.to(self.device)
+            images = images.to(self.device, non_blocking=True)
             # Forward old model
             outputs_old = None
             if t > 0:
                 outputs_old = self.model_old(images)
             # Forward current model
             outputs = self.model(images)
-            loss = self.criterion(t, outputs, targets.to(self.device), outputs_old)
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True), outputs_old)
             # Backward
             self.optimizer.zero_grad()
             loss.backward()

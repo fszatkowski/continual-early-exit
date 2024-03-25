@@ -66,8 +66,8 @@ class Appr(Inc_Learning_Appr):
         self._model_train(t)
         for images, targets in trn_loader:
             # Forward current model
-            outputs = self.model(images.to(self.device))
-            loss = self.criterion(t, outputs, targets.to(self.device))
+            outputs = self.model(images.to(self.device, non_blocking=True))
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True))
             # Backward
             self.optimizer.zero_grad()
             loss.backward()

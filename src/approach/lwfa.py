@@ -16,7 +16,6 @@ class Appr(Inc_Learning_Appr):
                  momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  lamb=1, lamb_a=1, T=2, mc=False, taskwise_kd=False,
-                 ta=False,
                  cka=False, debug_loss=False
                  ):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
@@ -30,7 +29,6 @@ class Appr(Inc_Learning_Appr):
         self.T = T
         self.mc = mc
         self.taskwise_kd = taskwise_kd
-        self.ta = ta
         self.cka = cka
         self.debug_loss = debug_loss
 
@@ -58,9 +56,6 @@ class Appr(Inc_Learning_Appr):
         parser.add_argument('--taskwise-kd', default=False, action='store_true', required=False,
                             help='If set, will use task-wise KD loss as defined in SSIL. (default=%(default)s)')
 
-        parser.add_argument('--ta', default=False, action='store_true', required=False,
-                            help='Teacher adaptation. If set, will update old model batch norm params '
-                                 'during training the new task. (default=%(default)s)')
 
         parser.add_argument('--cka', default=False, action='store_true', required=False,
                             help='If set, will compute CKA between current representations and representations at '
@@ -130,8 +125,6 @@ class Appr(Inc_Learning_Appr):
     def train_epoch(self, t, trn_loader):
         """Runs a single epoch"""
         self.model.train()
-        if self.ta and self.model_old is not None:
-            self.model_old.train()
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
@@ -183,12 +176,12 @@ class Appr(Inc_Learning_Appr):
                 targets_old = None
                 targets_aux = None
                 if t > 0:
-                    targets_old = self.model_old(images.to(self.device))
-                    targets_aux = self.model_aux(images.to(self.device))
+                    targets_old = self.model_old(images.to(self.device, non_blocking=True))
+                    targets_aux = self.model_aux(images.to(self.device, non_blocking=True))
                 # Forward current model
-                outputs = self.model(images.to(self.device))
-                loss = self.criterion(t, outputs, targets.to(self.device), targets_old, targets_aux)
-                hits_taw, hits_tag = self.calculate_metrics(outputs, targets.to(self.device))
+                outputs = self.model(images.to(self.device, non_blocking=True))
+                loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True), targets_old, targets_aux)
+                hits_taw, hits_tag = self.calculate_metrics(outputs, targets.to(self.device, non_blocking=True))
                 # Log
                 total_loss += loss.data.cpu().numpy().item() * len(targets)
                 total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
@@ -232,7 +225,7 @@ class Appr(Inc_Learning_Appr):
                     torch.nn.functional.binary_cross_entropy(g[:, y], q_i[:, y])
                     for y in range(kd_outputs.shape[-1]))
             elif self.taskwise_kd:
-                loss_kd = torch.zeros(t).to(self.device)
+                loss_kd = torch.zeros(t).to(self.device, non_blocking=True)
                 for _t in range(t):
                     soft_target = torch.nn.functional.softmax(targets_old[_t] / self.T, dim=1)
                     output_log = torch.nn.functional.log_softmax(outputs[_t] / self.T, dim=1)

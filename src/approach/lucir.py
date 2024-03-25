@@ -100,7 +100,7 @@ class Appr(Inc_Learning_Appr):
                 warnings.warn("Warning: ReLU not removed from last block.")
         # Changes the new head to a CosineLinear
         self.model.heads[-1] = CosineLinear(self.model.heads[-1].in_features, self.model.heads[-1].out_features)
-        self.model.to(self.device)
+        self.model.to(self.device, non_blocking=True)
         if t > 0:
             # Share sigma (Eta in paper) between all the heads
             self.model.heads[-1].sigma = self.model.heads[-2].sigma
@@ -150,7 +150,7 @@ class Appr(Inc_Learning_Appr):
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
-            images, targets = images.to(self.device), targets.to(self.device)
+            images, targets = images.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
             # Forward current model
             outputs, features = self.model(images, return_features=True)
             # Forward previous model
@@ -179,7 +179,7 @@ class Appr(Inc_Learning_Appr):
             if self.less_forget:
                 # Eq. 6: Less-Forgetting constraint
                 loss_dist = nn.CosineEmbeddingLoss()(features, ref_features.detach(),
-                                                     torch.ones(targets.shape[0]).to(self.device)) * self.lamda
+                                                     torch.ones(targets.shape[0]).to(self.device, non_blocking=True)) * self.lamda
             else:
                 # Scores before scale, [-1, 1]
                 ref_outputs = torch.cat([ro['wosigma'] for ro in ref_outputs], dim=1).detach()
@@ -189,7 +189,7 @@ class Appr(Inc_Learning_Appr):
                 # Eq. 5: Modified distillation loss for cosine normalization
                 loss_dist = nn.MSELoss()(old_scores, ref_outputs) * self.lamda * num_old_classes
 
-            loss_mr = torch.zeros(1).to(self.device)
+            loss_mr = torch.zeros(1).to(self.device, non_blocking=True)
             if self.margin_ranking:
                 # Scores before scale, [-1, 1]
                 outputs_wos = torch.cat([o['wosigma'] for o in outputs], dim=1)
@@ -211,9 +211,9 @@ class Appr(Inc_Learning_Appr):
                     assert (gt_scores.size() == max_novel_scores.size())
                     assert (gt_scores.size(0) == hard_num)
                     # Eq. 8: margin ranking loss
-                    loss_mr = nn.MarginRankingLoss(margin=self.dist)(gt_scores.view(-1, 1),
-                                                                     max_novel_scores.view(-1, 1),
-                                                                     torch.ones(hard_num * self.K).to(self.device))
+                    loss_mr = nn.MarginRankingLoss(margin=self.dist)(gt_scores.view(-1),
+                                                                     max_novel_scores.view(-1),
+                                                                     torch.ones(hard_num * self.K).to(self.device, non_blocking=True))
                     loss_mr *= self.lamb_mr
 
             # Eq. 1: regular cross entropy

@@ -19,7 +19,6 @@ class Appr(Inc_Learning_Appr):
                  momentum=0, wd=0, multi_softmax=False,fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  lamb=1, T=2, replay_batch_size=32,
-                 ta=False,
                  ):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, fix_bn, eval_on_train,
@@ -28,8 +27,6 @@ class Appr(Inc_Learning_Appr):
         self.lamb = lamb
         self.T = T
         self.replay_batch_size = replay_batch_size
-
-        self.ta = ta
 
         self.loss = torch.nn.CrossEntropyLoss(reduction='sum')
         
@@ -53,10 +50,6 @@ class Appr(Inc_Learning_Appr):
                             help='Temperature scaling (default=%(default)s)')
         parser.add_argument('--replay-batch-size', default=32, type=int, required=False,
                             help='Replay batch size (default=%(default)s)')
-
-        parser.add_argument('--ta', default=False, action='store_true', required=False,
-                            help='Teacher adaptation. If set, will update old model batch norm params '
-                                 'during training the new task. (default=%(default)s)')
 
         return parser.parse_known_args(args)
 
@@ -98,23 +91,21 @@ class Appr(Inc_Learning_Appr):
             trn_loader = zip(trn_loader, exemplar_loader)
         
         self.model.train()
-        if self.ta and self.model_old is not None:
-            self.model_old.train()
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         
         for samples in trn_loader:            
             if t > 0:
                 (data, target), (data_r, target_r) = samples
-                data, data_r = data.to(self.device), data_r.to(self.device)
+                data, data_r = data.to(self.device, non_blocking=True), data_r.to(self.device, non_blocking=True)
                 data = torch.cat((data,data_r))
-                target, target_r = target.to(self.device), target_r.to(self.device)
+                target, target_r = target.to(self.device, non_blocking=True), target_r.to(self.device, non_blocking=True)
                 # Forward old model
-                targets_old = self.model_old(data.to(self.device))
+                targets_old = self.model_old(data.to(self.device, non_blocking=True))
             else:
                 data, target = samples
-                data = data.to(self.device)
-                target = target.to(self.device)
+                data = data.to(self.device, non_blocking=True)
+                target = target.to(self.device, non_blocking=True)
                 target_r = None
                 targets_old = None
             # Forward current model
@@ -140,7 +131,7 @@ class Appr(Inc_Learning_Appr):
             loss_CE = (loss_CE_curr + loss_CE_prev) / (batch_size + replay_size)
 
             # loss_KD
-            loss_KD = torch.zeros(t).to(self.device)
+            loss_KD = torch.zeros(t).to(self.device, non_blocking=True)
             for _t in range(t):
                 soft_target = F.softmax(outputs_old[_t] / self.T, dim=1)
                 output_log = F.log_softmax(outputs[_t] / self.T, dim=1)

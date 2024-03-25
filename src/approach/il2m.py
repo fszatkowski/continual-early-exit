@@ -48,8 +48,10 @@ class Appr(Inc_Learning_Appr):
         with torch.no_grad():
             self.model.eval()
             for images, targets in trn_loader:
-                outputs = self.model(images.to(self.device))
-                scores = np.array(torch.cat(outputs, dim=1).data.cpu().numpy(), dtype=np.float)
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
+                outputs = self.model(images)
+                scores = np.array(torch.cat(outputs, dim=1).data.cpu().numpy(), dtype=np.float32)
                 for m in range(len(targets)):
                     if targets[m] < old_classes_number:
                         # computation of class means for past classes of the current state.
@@ -92,17 +94,20 @@ class Appr(Inc_Learning_Appr):
         self.exemplars_dataset.collect_exemplars(self.model, trn_loader, val_loader.dataset.transform)
 
     def calculate_metrics(self, outputs, targets):
+        targets = targets.to(self.device, non_blocking=True)
+        task_cls = self.model.task_cls.to(self.device, non_blocking=True)
+
         """Contains the main Task-Aware and Task-Agnostic metrics"""
         if self.ft_train:
             # no score rectification while training
             hits_taw, hits_tag = super().calculate_metrics(outputs, targets)
         else:
             # Task-Aware Multi-Head
-            pred = torch.zeros_like(targets.to(self.device))
+            pred = torch.zeros_like(targets)
             for m in range(len(pred)):
-                this_task = (self.model.task_cls.cumsum(0) <= targets[m]).sum()
+                this_task = (task_cls.cumsum(0) <= targets[m]).sum()
                 pred[m] = outputs[this_task][m].argmax() + self.model.task_offset[this_task]
-            hits_taw = (pred == targets.to(self.device)).float()
+            hits_taw = (pred == targets).float()
             # Task-Agnostic Multi-Head
             if self.multi_softmax:
                 outputs = [torch.nn.functional.log_softmax(output, dim=1) for output in outputs]
@@ -120,7 +125,7 @@ class Appr(Inc_Learning_Appr):
                                                        (self.models_confidence[-1] / self.models_confidence[o_task])
                         pred[m] = rectified_outputs[m].argmax()
                     # otherwise, rectification is not done because an old class is directly predicted
-            hits_tag = (pred == targets.to(self.device)).float()
+            hits_tag = (pred == targets).float()
         return hits_taw, hits_tag
 
     def criterion(self, t, outputs, targets):

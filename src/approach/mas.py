@@ -28,7 +28,7 @@ class Appr(Inc_Learning_Appr):
         # Store current parameters as the initial parameters before first task starts
         self.older_params = {n: p.clone().detach() for n, p in feat_ext.named_parameters() if p.requires_grad}
         # Store fisher information weight importance
-        self.importance = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters()
+        self.importance = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                            if p.requires_grad}
 
     @staticmethod
@@ -62,7 +62,7 @@ class Appr(Inc_Learning_Appr):
     # Section 4.1: MAS (global) is implemented since the paper shows is more efficient than l-MAS (local)
     def estimate_parameter_importance(self, trn_loader):
         # Initialize importance matrices
-        importance = {n: torch.zeros(p.shape).to(self.device) for n, p in self.model.model.named_parameters()
+        importance = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in self.model.model.named_parameters()
                       if p.requires_grad}
         # Compute fisher information for specified number of samples -- rounded to the batch size
         n_samples_batches = (self.num_samples // trn_loader.batch_size + 1) if self.num_samples > 0 \
@@ -71,7 +71,7 @@ class Appr(Inc_Learning_Appr):
         self.model.train()
         for images, targets in itertools.islice(trn_loader, n_samples_batches):
             # MAS allows any unlabeled data to do the estimation, we choose the current data as in main experiments
-            outputs = self.model.forward(images.to(self.device))
+            outputs = self.model.forward(images.to(self.device, non_blocking=True))
             # Page 6: labels not required, "...use the gradients of the squared L2-norm of the learned function output."
             loss = torch.norm(torch.cat(outputs, dim=1), p=2, dim=1).mean()
             self.optimizer.zero_grad()
@@ -114,7 +114,7 @@ class Appr(Inc_Learning_Appr):
         for n in self.importance.keys():
             # Added option to accumulate importance over time with a pre-fixed growing alpha
             if self.alpha == -1:
-                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(self.device)
+                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(self.device, non_blocking=True)
                 self.importance[n] = alpha * self.importance[n] + (1 - alpha) * curr_importance[n]
             else:
                 # As in original code: MAS_utils/MAS_based_Training.py line 638 -- just add prev and new

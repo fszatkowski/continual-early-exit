@@ -79,7 +79,7 @@ class Appr(Inc_Learning_Appr):
         Some parts could go into self.pre_train_process() or self.post_train_process(), but we leave it for readability
         """
         # add a bias layer for the new classes
-        self.bias_layers.append(BiasLayer().to(self.device))
+        self.bias_layers.append(BiasLayer().to(self.device, non_blocking=True))
 
         # STAGE 0: EXEMPLAR MANAGEMENT -- select subset of validation to use in Stage 2 -- val_old, val_new (Fig.2)
         print('Stage 0: Select exemplars from validation')
@@ -176,18 +176,18 @@ class Appr(Inc_Learning_Appr):
                 for inputs, targets in bic_val_loader:
                     # Forward current model
                     with torch.no_grad():
-                        outputs = self.model(inputs.to(self.device))
+                        outputs = self.model(inputs.to(self.device, non_blocking=True))
                         old_cls_outs = self.bias_forward(outputs[:t])
                     new_cls_outs = self.bias_layers[t](outputs[t])
                     pred_all_classes = torch.cat([torch.cat(old_cls_outs, dim=1), new_cls_outs], dim=1)
                     # Eqs. 4-5: outputs from previous tasks are not modified (any alpha or beta from those is fixed),
                     #           only alpha and beta from the new task is learned. No temperature scaling used.
-                    loss = torch.nn.functional.cross_entropy(pred_all_classes, targets.to(self.device))
+                    loss = torch.nn.functional.cross_entropy(pred_all_classes, targets.to(self.device, non_blocking=True))
                     # However, in their code, they apply a 0.1 * L2-loss to the gamma variable (beta in the paper)
                     loss += 0.1 * ((self.bias_layers[t].beta[0] ** 2) / 2)
                     # Log
                     total_loss += loss.item() * len(targets)
-                    total_acc += ((pred_all_classes.argmax(1) == targets.to(self.device)).float()).sum().item()
+                    total_acc += ((pred_all_classes.argmax(1) == targets.to(self.device, non_blocking=True)).float()).sum().item()
                     # Backward
                     bic_optimizer.zero_grad()
                     loss.backward()
@@ -219,12 +219,12 @@ class Appr(Inc_Learning_Appr):
             # Forward old model
             targets_old = None
             if t > 0:
-                targets_old = self.model_old(images.to(self.device))
+                targets_old = self.model_old(images.to(self.device, non_blocking=True))
                 targets_old = self.bias_forward(targets_old)  # apply bias correction
             # Forward current model
-            outputs = self.model(images.to(self.device))
+            outputs = self.model(images.to(self.device, non_blocking=True))
             outputs = self.bias_forward(outputs)  # apply bias correction
-            loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True), targets_old)
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -239,15 +239,17 @@ class Appr(Inc_Learning_Appr):
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 # Forward old model
                 targets_old = None
                 if t > 0:
-                    targets_old = self.model_old(images.to(self.device))
+                    targets_old = self.model_old(images)
                     targets_old = self.bias_forward(targets_old)  # apply bias correction
                 # Forward current model
-                outputs = self.model(images.to(self.device))
+                outputs = self.model(images)
                 outputs = self.bias_forward(outputs)  # apply bias correction
-                loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
+                loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True), targets_old)
                 hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
                 # Log
                 total_loss += loss.item() * len(targets)
@@ -282,7 +284,7 @@ class Appr(Inc_Learning_Appr):
                                             torch.cat(targets_old[:t], dim=1), exp=1.0 / self.T)
         # trade-off - the lambda from the paper if lamb=-1
         if self.lamb == -1:
-            lamb = (self.model.task_cls[:t].sum().float() / self.model.task_cls.sum()).to(self.device)
+            lamb = (self.model.task_cls[:t].sum().float() / self.model.task_cls.sum()).to(self.device, non_blocking=True)
             return (1.0 - lamb) * torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1),
                                                                     targets) + lamb * loss_dist
         else:

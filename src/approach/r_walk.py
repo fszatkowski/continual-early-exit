@@ -14,11 +14,12 @@ class Appr(Inc_Learning_Appr):
 
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
                  momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
-                 select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, lamb=1, alpha=0.5,
+                 select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
+                 lamb=1, alpha=0.5,
                  damping=0.1, fim_sampling_type='max_pred', fim_num_samples=-1):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, fix_bn, eval_on_train,
-                                   select_best_model_by_val_loss, logger, exemplars_dataset)
+                                   select_best_model_by_val_loss, logger, exemplars_dataset, scheduler_milestones)
         self.lamb = lamb
         self.alpha = alpha
         self.damping = damping
@@ -28,14 +29,14 @@ class Appr(Inc_Learning_Appr):
         # In all cases, we only keep importance weights for the model, but not for the heads.
         feat_ext = self.model.model
         # Page 7: "task-specific parameter importance over the entire training trajectory."
-        self.w = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters() if p.requires_grad}
+        self.w = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters() if p.requires_grad}
         # Store current parameters as the initial parameters before first task starts
-        self.older_params = {n: p.clone().detach().to(self.device) for n, p in feat_ext.named_parameters()
+        self.older_params = {n: p.clone().detach().to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                              if p.requires_grad}
         # Store scores and fisher information
-        self.scores = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters()
+        self.scores = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                        if p.requires_grad}
-        self.fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters()
+        self.fisher = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                        if p.requires_grad}
 
     @staticmethod
@@ -74,7 +75,7 @@ class Appr(Inc_Learning_Appr):
 
     def compute_fisher_matrix_diag(self, trn_loader):
         # Store Fisher Information
-        fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self.model.model.named_parameters()
+        fisher = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in self.model.model.named_parameters()
                   if p.requires_grad}
         # Compute fisher information for specified number of samples -- rounded to the batch size
         n_samples_batches = (self.num_samples // trn_loader.batch_size + 1) if self.num_samples > 0 \
@@ -82,11 +83,11 @@ class Appr(Inc_Learning_Appr):
         # Do forward and backward pass to compute the fisher information
         self.model.train()
         for images, targets in itertools.islice(trn_loader, n_samples_batches):
-            outputs = self.model.forward(images.to(self.device))
+            outputs = self.model.forward(images.to(self.device, non_blocking=True))
 
             if self.sampling_type == 'true':
                 # Use the labels to compute the gradients based on the CE-loss with the ground truth
-                preds = targets.to(self.device)
+                preds = targets.to(self.device, non_blocking=True)
             elif self.sampling_type == 'max_pred':
                 # Not use labels and compute the gradients related to the prediction the model has learned
                 preds = torch.cat(outputs, dim=1).argmax(1).flatten()
@@ -134,12 +135,12 @@ class Appr(Inc_Learning_Appr):
         for n in self.fisher.keys():
             # Added option to accumulate fisher over time with a pre-fixed growing alpha
             if self.alpha == -1:
-                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(self.device)
+                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(self.device, non_blocking=True)
                 self.fisher[n] = alpha * self.fisher[n] + (1 - alpha) * curr_fisher[n]
             else:
                 self.fisher[n] = self.alpha * self.fisher[n] + (1 - self.alpha) * curr_fisher[n]
         # Page 7: Optimization Path-based Parameter Importance: importance scores computation
-        curr_score = {n: torch.zeros(p.shape).to(self.device) for n, p in self.model.model.named_parameters()
+        curr_score = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in self.model.model.named_parameters()
                       if p.requires_grad}
         with torch.no_grad():
             curr_params = {n: p for n, p in self.model.model.named_parameters() if p.requires_grad}
@@ -166,16 +167,16 @@ class Appr(Inc_Learning_Appr):
             curr_feat_ext = {n: p.clone().detach() for n, p in self.model.model.named_parameters() if p.requires_grad}
 
             # Forward current model
-            outputs = self.model(images.to(self.device))
+            outputs = self.model(images.to(self.device, non_blocking=True))
             # cross-entropy loss on current task
-            loss = torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets.to(self.device))
+            loss = torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets.to(self.device, non_blocking=True))
             self.optimizer.zero_grad()
             loss.backward(retain_graph=True)
             # store gradients without regularization term
             unreg_grads = {n: p.grad.clone().detach() for n, p in self.model.model.named_parameters()
                            if p.grad is not None}
             # apply loss with path integral regularization
-            loss = self.criterion(t, outputs, targets.to(self.device))
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True))
 
             # Backward
             self.optimizer.zero_grad()

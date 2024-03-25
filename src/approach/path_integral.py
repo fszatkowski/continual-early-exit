@@ -25,12 +25,12 @@ class Appr(Inc_Learning_Appr):
         feat_ext = self.model.model
         # Page 3, following Eq. 3: "The w now have an intuitive interpretation as the parameter specific contribution to
         #  changes in the total loss."
-        self.w = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters() if p.requires_grad}
+        self.w = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters() if p.requires_grad}
         # Store current parameters as the initial parameters before first task starts
-        self.older_params = {n: p.clone().detach().to(self.device) for n, p in feat_ext.named_parameters()
+        self.older_params = {n: p.clone().detach().to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                              if p.requires_grad}
         # Store importance weights matrices
-        self.importance = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters()
+        self.importance = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                            if p.requires_grad}
 
     @staticmethod
@@ -98,22 +98,22 @@ class Appr(Inc_Learning_Appr):
             curr_feat_ext = {n: p.clone().detach() for n, p in self.model.model.named_parameters() if p.requires_grad}
 
             # Forward current model
-            outputs = self.model(images.to(self.device))
+            outputs = self.model(images.to(self.device, non_blocking=True))
             # theoretically this is the correct one for 2 tasks, however, for more tasks maybe is the current loss
             # check https://github.com/ganguli-lab/pathint/blob/master/pathint/optimizers.py line 123
             # cross-entropy loss on current task
             if len(self.exemplars_dataset) == 0:
-                loss = torch.nn.functional.cross_entropy(outputs[t], targets.to(self.device) - self.model.task_offset[t])
+                loss = torch.nn.functional.cross_entropy(outputs[t], targets.to(self.device, non_blocking=True) - self.model.task_offset[t])
             else:
                 # with exemplars we check output from all heads (train data has all labels)
-                loss = torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets.to(self.device))
+                loss = torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets.to(self.device, non_blocking=True))
             self.optimizer.zero_grad()
             loss.backward(retain_graph=True)
             # store gradients without regularization term
             unreg_grads = {n: p.grad.clone().detach() for n, p in self.model.model.named_parameters()
                             if p.grad is not None}
             # apply loss with path integral regularization
-            loss = self.criterion(t, outputs, targets.to(self.device))
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True))
 
             # Backward
             self.optimizer.zero_grad()

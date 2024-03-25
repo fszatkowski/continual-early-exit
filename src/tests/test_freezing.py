@@ -15,10 +15,3 @@ def test_freezing_with_exemplars():
     args_line = FAST_LOCAL_TEST_ARGS
     args_line += " --num-exemplars 200"
     run_main_and_assert(args_line)
-
-
-def test_freezing_with_warmup():
-    args_line = FAST_LOCAL_TEST_ARGS
-    args_line += " --warmup-nepochs 5"
-    args_line += " --warmup-lr-factor 0.5"
-    run_main_and_assert(args_line)

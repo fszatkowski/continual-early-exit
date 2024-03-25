@@ -19,9 +19,7 @@ class Appr(Inc_Learning_Appr):
                  momentum=0, wd=0, multi_softmax=False, fix_bn=False, eval_on_train=False,
                  select_best_model_by_val_loss=True, logger=None, exemplars_dataset=None, scheduler_milestones=None,
                  lamb=1, T=2, mc=False, taskwise_kd=False,
-                 ta=False,
                  cka=False, debug_loss=False,
-                 tp=False, ctt=False, bnp=False, cbnt=False, pretraining_epochs=5, ta_lr=1e-5,
                  ):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax,
@@ -32,19 +30,6 @@ class Appr(Inc_Learning_Appr):
         self.T = T
         self.mc = mc
         self.taskwise_kd = taskwise_kd
-
-        self.ta = ta
-
-        self.tp = tp
-        self.ctt = ctt
-        self.bnp = bnp
-        self.cbnt = cbnt
-        if self.tp or self.ctt or self.bnp or self.cbnt:
-            assert not self.ta, "Cannot use both TA and TP/CTT/BNP/CBNT"
-        if sum([self.tp, self.ctt, self.bnp, self.cbnt]) > 1:
-            assert not self.ta, "Cannot use both TP and CTT and BNP and CBNT"
-        self.pretraining_epochs = pretraining_epochs
-        self.ta_lr = ta_lr
 
         self.cka = cka
         self.debug_loss = debug_loss
@@ -71,70 +56,10 @@ class Appr(Inc_Learning_Appr):
         parser.add_argument('--taskwise-kd', default=False, action='store_true', required=False,
                             help='If set, will use task-wise KD loss as defined in SSIL. (default=%(default)s)')
 
-        parser.add_argument('--ta', default=False, action='store_true', required=False,
-                            help='Teacher adaptation. If set, will update old model batch norm params '
-                                 'during training the new task. (default=%(default)s)')
-
-        parser.add_argument('--tp', default=False, action='store_true', required=False,
-                            help='Teacher pretraining instead of TA. (default=%(default)s)')
-        parser.add_argument('--ctt', default=False, action='store_true', required=False,
-                            help='Continuous teacher training instead of TA. (default=%(default)s)')
-        parser.add_argument('--bnp', default=False, action='store_true', required=False,
-                            help='Batch norm pretraining instead of TA. (default=%(default)s)')
-        parser.add_argument('--cbnt', default=False, action='store_true', required=False,
-                            help='Continuous batch norm training instead of TA. (default=%(default)s)')
-        parser.add_argument('--pretraining-epochs', default=5, type=int, required=False,
-                            help='Number of epochs for pretraining. (default=%(default)s)')
-        parser.add_argument('--ta-lr', default=1e-5, type=float, required=False,
-                            help='Teacher adaptation learning rate. (default=%(default)s)')
-
-        parser.add_argument('--cka', default=False, action='store_true', required=False,
-                            help='If set, will compute CKA between current representations and representations at '
-                                 'the start of the task. (default=%(default)s)')
         parser.add_argument('--debug-loss', default=False, action='store_true', required=False,
                             help='If set, will log intermediate loss values. (default=%(default)s)')
 
         return parser.parse_known_args(args)
-
-    def pre_train_process(self, t, trn_loader):
-        if t > 0:
-            if self.ctt or self.cbnt or self.tp or self.bnp:
-                self.model_old.add_head(self.model.heads[-1].out_features)
-                self.model_old = self.model_old.to(self.device)
-
-            if self.ctt or self.cbnt:
-                if self.ctt:
-                    self.model_old.unfreeze_all()
-                if self.cbnt:
-                    self.model_old.unfreeze_bn()
-
-                params = [p for p in self.model_old.parameters() if p.requires_grad]
-                self.optimizer_old = torch.optim.SGD(params, lr=self.ta_lr, weight_decay=self.wd)
-
-            if self.tp or self.bnp:
-                if self.tp:
-                    self.model_old.unfreeze_all()
-                if self.bnp:
-                    self.model_old.unfreeze_bn()
-                self.model_old.train()
-
-                params = [p for p in self.model_old.parameters() if p.requires_grad]
-                self.optimizer_old = torch.optim.SGD(params, lr=self.ta_lr, weight_decay=self.wd)
-
-                for epoch in range(self.pretraining_epochs):
-                    for images, targets in trn_loader:
-                        images, targets = images.to(self.device), targets.to(self.device)
-                        outputs = self.model_old(images)
-                        loss = self.criterion(t, outputs, targets)
-
-                        self.optimizer_old.zero_grad()
-                        loss.backward()
-                        torch.nn.utils.clip_grad_norm_(self.model_old.parameters(), self.clipgrad)
-                        self.optimizer_old.step()
-
-                self.model_old.freeze_all()
-                self.model_old.eval()
-        super().pre_train_process(t, trn_loader)
 
     def train_loop(self, t, trn_loader, val_loader):
         """Contains the epochs loop"""
@@ -168,37 +93,27 @@ class Appr(Inc_Learning_Appr):
         self.model.train()
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
+
         for images, targets in trn_loader:
             images = images.to(self.device, non_blocking=True)
             targets = targets.to(self.device, non_blocking=True)
             # Forward old model
             targets_old = None
             if t > 0:
-                if self.ctt or self.cbnt or self.ta:
-                    self.model_old.train()
-                else:
-                    self.model_old.eval()
                 targets_old = self.model_old(images)
-                if self.ctt or self.cbnt:
-                    loss_old = self.criterion(t, targets_old, targets)
-                    self.optimizer_old.zero_grad()
-                    loss_old.backward()
-                    torch.nn.utils.clip_grad_norm_(self.model_old.parameters(), self.clipgrad)
-                    self.optimizer_old.step()
-                    with torch.no_grad():
-                        self.model_old.eval()
-                        targets_old = self.model_old(images)
 
             # Forward current model
             outputs = self.model(images)
-            loss, loss_kd, loss_ce = self.criterion(t, outputs, targets, targets_old, return_partial_losses=True)
             if self.debug_loss:
+                loss, loss_kd, loss_ce = self.criterion(t, outputs, targets, targets_old, return_partial_losses=True)
                 self.logger.log_scalar(task=None, iter=None, name='loss_kd', group=f"debug_t{t}",
                                        value=float(loss_kd))
                 self.logger.log_scalar(task=None, iter=None, name='loss_ce', group=f"debug_t{t}",
                                        value=float(loss_ce))
                 self.logger.log_scalar(task=None, iter=None, name='loss_total', group=f"debug_t{t}",
                                        value=float(loss))
+            else:
+                loss = self.criterion(t, outputs, targets, targets_old, return_partial_losses=False)
 
             assert not torch.isnan(loss), "Loss is NaN"
 
@@ -220,7 +135,7 @@ class Appr(Inc_Learning_Appr):
                 self.model_old.eval()
 
             for images, targets in val_loader:
-                images, targets = images.to(self.device), targets.to(self.device)
+                images, targets = images.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
                 # Forward old model
                 targets_old = None
                 if t > 0:
@@ -270,12 +185,12 @@ class Appr(Inc_Learning_Appr):
                     torch.nn.functional.binary_cross_entropy(g[:, y], q_i[:, y])
                     for y in range(kd_outputs.shape[-1]))
             elif self.taskwise_kd:
-                loss_kd = torch.zeros(t).to(self.device)
+                loss_kd = torch.zeros(t).to(self.device, non_blocking=True)
                 for _t in range(t):
                     soft_target = torch.nn.functional.softmax(outputs_old[_t] / self.T, dim=1)
                     output_log = torch.nn.functional.log_softmax(outputs[_t] / self.T, dim=1)
                     loss_kd[_t] = torch.nn.functional.kl_div(output_log, soft_target, reduction='batchmean') * (
-                                self.T ** 2)
+                            self.T ** 2)
                 loss_kd = loss_kd.sum()
             else:
                 loss_kd = self.cross_entropy(kd_outputs, kd_outputs_old, exp=1.0 / self.T)
@@ -288,6 +203,8 @@ class Appr(Inc_Learning_Appr):
         else:
             loss_ce = torch.nn.functional.cross_entropy(outputs[t], targets - self.model.task_offset[t])
 
+        if self.lamb is None:
+            self.lamb = 0.
         if return_partial_losses:
             return self.lamb * loss_kd + loss_ce, loss_kd, loss_ce
         else:

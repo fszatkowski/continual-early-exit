@@ -89,7 +89,7 @@ class Inc_Learning_Appr:
 
                 total_acc_taw, total_acc_tag, total_ce_taw, total_ce_tag, total_num = 0, 0, 0, 0, 0
                 for images, targets in loader:
-                    images, targets = images.to(self.device), targets.to(self.device)
+                    images, targets = images.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
                     outputs = self.model(images)
                     hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
                     ce_taw = torch.nn.functional.cross_entropy(outputs[i], targets - self.model.task_offset[i],
@@ -173,7 +173,6 @@ class Inc_Learning_Appr:
 
             if self.scheduler is not None:
                 lr = self.scheduler.get_last_lr()[0]
-                self.scheduler.step()
 
             if self.select_best_model_by_val_loss:
                 # Adapt learning rate - patience scheme - early stopping regularization
@@ -219,8 +218,8 @@ class Inc_Learning_Appr:
             self.model.freeze_bn()
         for images, targets in trn_loader:
             # Forward current model
-            outputs = self.model(images.to(self.device))
-            loss = self.criterion(t, outputs, targets.to(self.device))
+            outputs = self.model(images.to(self.device, non_blocking=True))
+            loss = self.criterion(t, outputs, targets.to(self.device, non_blocking=True))
             # Backward
             if t == 0 or not self.no_learning:
                 self.optimizer.zero_grad()
@@ -237,7 +236,7 @@ class Inc_Learning_Appr:
             self.model.eval()
             for images, targets in val_loader:
                 # Forward current model
-                images, targets = images.to(self.device), targets.to(self.device)
+                images, targets = images.to(self.device, non_blocking=True), targets.to(self.device, non_blocking=True)
 
                 outputs = self.model(images)
                 loss = self.criterion(t, outputs, targets)
@@ -254,7 +253,7 @@ class Inc_Learning_Appr:
         pred = torch.zeros_like(targets)
         # Task-Aware Multi-Head
         for m in range(len(pred)):
-            this_task = (self.model.task_cls.cumsum(0).to(self.device) <= targets[m]).sum()
+            this_task = (self.model.task_cls.cumsum(0).to(self.device, non_blocking=True) <= targets[m]).sum()
             pred[m] = outputs[this_task][m].argmax() + self.model.task_offset[this_task]
         hits_taw = (pred == targets).float()
         # Task-Agnostic Multi-Head

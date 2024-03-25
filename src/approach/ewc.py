@@ -28,7 +28,7 @@ class Appr(Inc_Learning_Appr):
         # Store current parameters as the initial parameters before first task starts
         self.older_params = {n: p.clone().detach() for n, p in feat_ext.named_parameters() if p.requires_grad}
         # Store fisher information weight importance
-        self.fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in feat_ext.named_parameters()
+        self.fisher = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in feat_ext.named_parameters()
                        if p.requires_grad}
 
     @staticmethod
@@ -64,7 +64,7 @@ class Appr(Inc_Learning_Appr):
 
     def compute_fisher_matrix_diag(self, trn_loader):
         # Store Fisher Information
-        fisher = {n: torch.zeros(p.shape).to(self.device) for n, p in self.model.model.named_parameters()
+        fisher = {n: torch.zeros(p.shape).to(self.device, non_blocking=True) for n, p in self.model.model.named_parameters()
                   if p.requires_grad}
         # Compute fisher information for specified number of samples -- rounded to the batch size
         n_samples_batches = (self.num_samples // trn_loader.batch_size + 1) if self.num_samples > 0 \
@@ -72,11 +72,11 @@ class Appr(Inc_Learning_Appr):
         # Do forward and backward pass to compute the fisher information
         self.model.train()
         for images, targets in itertools.islice(trn_loader, n_samples_batches):
-            outputs = self.model.forward(images.to(self.device))
+            outputs = self.model.forward(images.to(self.device, non_blocking=True))
 
             if self.sampling_type == 'true':
                 # Use the labels to compute the gradients based on the CE-loss with the ground truth
-                preds = targets.to(self.device)
+                preds = targets.to(self.device, non_blocking=True)
             elif self.sampling_type == 'max_pred':
                 # Not use labels and compute the gradients related to the prediction the model has learned
                 preds = torch.cat(outputs, dim=1).argmax(1).flatten()
@@ -126,7 +126,7 @@ class Appr(Inc_Learning_Appr):
         for n in self.fisher.keys():
             # Added option to accumulate fisher over time with a pre-fixed growing alpha
             if self.alpha == -1:
-                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(self.device)
+                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(self.device, non_blocking=True)
                 self.fisher[n] = alpha * self.fisher[n] + (1 - alpha) * curr_fisher[n]
             else:
                 self.fisher[n] = (self.alpha * self.fisher[n] + (1 - self.alpha) * curr_fisher[n])
