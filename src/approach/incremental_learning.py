@@ -53,6 +53,7 @@ class Inc_Learning_Appr:
         self.scheduler = None
         self.debug = False
         self.no_learning = no_learning
+        self.current_epoch = 0
 
     @staticmethod
     def extra_parser(args):
@@ -96,104 +97,6 @@ class Inc_Learning_Appr:
         """Runs before training all epochs of the task (before the train session)"""
         pass
 
-    def _evaluate(self, t, debug=False):
-        if t == 0:
-            raise ValueError()
-
-        loaders = self.tst_loader[: t + 1]
-
-        self.model.eval()
-        per_task_taw_acc = []
-        per_task_tag_acc = []
-        per_task_ce_taw = []
-        per_task_ce_tag = []
-
-        with torch.no_grad():
-            for i, loader in enumerate(loaders):
-                if not self.debug and i != len(loaders) - 1:
-                    continue
-
-                total_acc_taw, total_acc_tag, total_ce_taw, total_ce_tag, total_num = (
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                )
-                for images, targets in loader:
-                    images, targets = images.to(
-                        self.device, non_blocking=True
-                    ), targets.to(self.device, non_blocking=True)
-                    outputs = self.model(images)
-                    hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
-                    ce_taw = torch.nn.functional.cross_entropy(
-                        outputs[i], targets - self.model.task_offset[i], reduction="sum"
-                    )
-                    ce_tag = torch.nn.functional.cross_entropy(
-                        torch.cat(outputs, dim=1), targets, reduction="sum"
-                    )
-
-                    # Log
-                    total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
-                    total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
-                    total_ce_taw += ce_taw.cpu().item()
-                    total_ce_tag += ce_tag.cpu().item()
-                    total_num += len(targets)
-                per_task_taw_acc.append(total_acc_taw / total_num)
-                per_task_tag_acc.append(total_acc_tag / total_num)
-                per_task_ce_taw.append(total_ce_taw / total_num)
-                per_task_ce_tag.append(total_ce_tag / total_num)
-
-        if debug:
-            output = {
-                "tag_acc_current_task": per_task_tag_acc[-1],
-                "tag_acc_all_tasks": sum(per_task_tag_acc[:-1])
-                / len(per_task_tag_acc[:-1]),
-                "taw_acc_current_task": per_task_taw_acc[-1],
-                "ce_taw_current_task": per_task_ce_taw[-1],
-                "ce_taw_all_tasks": sum(per_task_ce_taw) / len(per_task_ce_taw),
-                "ce_tag_current_task": per_task_ce_tag[-1],
-                "ce_tag_all_tasks": sum(per_task_ce_tag) / len(per_task_ce_tag),
-            }
-        else:
-            output = {
-                "tag_acc_current_task": per_task_tag_acc[-1],
-                "taw_acc_current_task": per_task_taw_acc[-1],
-                "ce_taw_current_task": per_task_ce_taw[-1],
-                "ce_tag_current_task": per_task_ce_tag[-1],
-            }
-        return output
-
-    def _log_weight_norms(self, t, prev_w, prev_b, new_w, new_b):
-        self.logger.log_scalar(
-            task=None,
-            iter=None,
-            name="prev_heads_w_norm",
-            group=f"wu_w_t{t}",
-            value=prev_w,
-        )
-        self.logger.log_scalar(
-            task=None,
-            iter=None,
-            name="prev_heads_b_norm",
-            group=f"wu_w_t{t}",
-            value=prev_b,
-        )
-        self.logger.log_scalar(
-            task=None,
-            iter=None,
-            name="new_head_w_norm",
-            group=f"wu_w_t{t}",
-            value=new_w,
-        )
-        self.logger.log_scalar(
-            task=None,
-            iter=None,
-            name="new_head_b_norm",
-            group=f"wu_w_t{t}",
-            value=new_b,
-        )
-
     def train_loop(self, t, trn_loader, val_loader):
         """Contains the epochs loop"""
         lr = self.lr
@@ -208,11 +111,18 @@ class Inc_Learning_Appr:
         for e in range(self.nepochs):
             # Train
             clock0 = time.time()
+            self.current_epoch = e
             self.train_epoch(t, trn_loader)
             clock1 = time.time()
             if self.eval_on_train:
                 train_loss, train_acc, _ = self.eval(t, trn_loader)
                 clock2 = time.time()
+                self.log_results(
+                    t=t, e=e, loss=train_loss, acc=train_acc, group="train"
+                )
+                if self.model.is_early_exit():
+                    train_loss = train_loss[-1]
+                    train_acc = train_acc[-1]
                 print(
                     "| Epoch {:3d}, time={:5.1f}s/{:5.1f}s | Train: loss={:.3f}, TAw acc={:5.1f}% |".format(
                         e + 1,
@@ -222,12 +132,6 @@ class Inc_Learning_Appr:
                         100 * train_acc,
                     ),
                     end="",
-                )
-                self.logger.log_scalar(
-                    task=t, iter=e + 1, name="loss", value=train_loss, group="train"
-                )
-                self.logger.log_scalar(
-                    task=t, iter=e + 1, name="acc", value=100 * train_acc, group="train"
                 )
             else:
                 print(
@@ -241,17 +145,15 @@ class Inc_Learning_Appr:
             clock3 = time.time()
             valid_loss, valid_acc, _ = self.eval(t, val_loader)
             clock4 = time.time()
+            self.log_results(t=t, e=e, loss=valid_loss, acc=valid_acc, group="valid")
+            if self.model.is_early_exit():
+                valid_loss = valid_loss[-1]
+                valid_acc = valid_acc[-1]
             print(
                 " Valid: time={:5.1f}s loss={:.3f}, TAw acc={:5.1f}% |".format(
                     clock4 - clock3, valid_loss, 100 * valid_acc
                 ),
                 end="",
-            )
-            self.logger.log_scalar(
-                task=t, iter=e + 1, name="loss", value=valid_loss, group="valid"
-            )
-            self.logger.log_scalar(
-                task=t, iter=e + 1, name="acc", value=100 * valid_acc, group="valid"
             )
 
             if self.scheduler is not None:
@@ -304,11 +206,14 @@ class Inc_Learning_Appr:
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+
             # Forward current model
-            outputs = self.model(images.to(self.device, non_blocking=True))
-            loss = self.criterion(
-                t, outputs, targets.to(self.device, non_blocking=True)
-            )
+            outputs = self.model(images)
+            loss = self.criterion(t, outputs, targets)
+            if isinstance(loss, list):
+                loss = sum(loss)
             # Backward
             if t == 0 or not self.no_learning:
                 self.optimizer.zero_grad()
@@ -321,7 +226,15 @@ class Inc_Learning_Appr:
     def eval(self, t, val_loader):
         """Contains the evaluation code"""
         with torch.no_grad():
-            total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
+            if self.model.is_early_exit():
+                total_loss, total_acc_taw, total_acc_tag, total_num = (
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                )
+            else:
+                total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
                 # Forward current model
@@ -331,12 +244,22 @@ class Inc_Learning_Appr:
 
                 outputs = self.model(images)
                 loss = self.criterion(t, outputs, targets)
-                hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
-                # Log
-                total_loss += loss.item() * len(targets)
-                total_acc_taw += hits_taw.sum().item()
-                total_acc_tag += hits_tag.sum().item()
-                total_num += len(targets)
+
+                if self.model.is_early_exit():
+                    for i, ic_outputs in enumerate(outputs):
+                        hits_taw, hits_tag = self.calculate_metrics(ic_outputs, targets)
+                        # Log
+                        total_loss += loss[i].item() * len(targets)
+                        total_acc_taw[i] += hits_taw.sum().item()
+                        total_acc_tag[i] += hits_tag.sum().item()
+                        total_num += len(targets)
+                else:
+                    hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
+                    # Log
+                    total_loss += loss.item() * len(targets)
+                    total_acc_taw += hits_taw.sum().item()
+                    total_acc_tag += hits_tag.sum().item()
+                    total_num += len(targets)
         return (
             total_loss / total_num,
             total_acc_taw / total_num,
@@ -365,8 +288,39 @@ class Inc_Learning_Appr:
         hits_tag = (pred == targets).float()
         return hits_taw, hits_tag
 
+    def log_results(self, t, e, loss, acc, group):
+        if self.model.is_early_exit():
+            for i, (loss, acc) in enumerate(zip(loss, acc)):
+                self.logger.log_scalar(
+                    task=t, iter=e + 1, name=f"loss_c_{i}", value=loss, group=group
+                )
+                self.logger.log_scalar(
+                    task=t, iter=e + 1, name=f"acc_c_{i}", value=100 * acc, group=group
+                )
+        else:
+            self.logger.log_scalar(
+                task=t, iter=e + 1, name="loss", value=loss, group=group
+            )
+            self.logger.log_scalar(
+                task=t, iter=e + 1, name="acc", value=100 * acc, group=group
+            )
+
     def criterion(self, t, outputs, targets):
         """Returns the loss value"""
-        return torch.nn.functional.cross_entropy(
-            outputs[t], targets - self.model.task_offset[t]
-        )
+        if self.model.is_early_exit():
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
+            )
+            loss = []
+            for ic_outputs, ic_weight in zip(outputs, ic_weights):
+                loss.append(
+                    ic_weight
+                    * torch.nn.functional.cross_entropy(
+                        ic_outputs[t], targets - self.model.task_offset[t]
+                    )
+                )
+            return loss
+        else:
+            return torch.nn.functional.cross_entropy(
+                outputs[t], targets - self.model.task_offset[t]
+            )

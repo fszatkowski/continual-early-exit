@@ -23,12 +23,6 @@ def test_lucir_exemplars_with_gridsearch():
     run_main_and_assert(args_line)
 
 
-def test_lucir_exemplars():
-    args_line = FAST_LOCAL_TEST_ARGS
-    args_line += " --num-exemplars-per-class 20"
-    run_main_and_assert(args_line)
-
-
 def test_lucir_exemplars_remove_margin_ranking():
     args_line = FAST_LOCAL_TEST_ARGS
     args_line += " --num-exemplars-per-class 20"

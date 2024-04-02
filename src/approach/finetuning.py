@@ -116,9 +116,34 @@ class Appr(Inc_Learning_Appr):
         )
 
     def criterion(self, t, outputs, targets):
-        """Returns the loss value"""
-        if self.all_out or len(self.exemplars_dataset) > 0:
-            return torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
-        return torch.nn.functional.cross_entropy(
-            outputs[t], targets - self.model.task_offset[t]
-        )
+        if self.model.is_early_exit():
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
+            )
+            loss = []
+            for ic_outputs, ic_weight in zip(outputs, ic_weights):
+                if self.all_out or len(self.exemplars_dataset) > 0:
+                    loss.append(
+                        ic_weight
+                        * torch.nn.functional.cross_entropy(
+                            torch.cat(ic_outputs, dim=1), targets
+                        )
+                    )
+                else:
+                    loss.append(
+                        ic_weight
+                        * torch.nn.functional.cross_entropy(
+                            ic_outputs[t], targets - self.model.task_offset[t]
+                        )
+                    )
+        else:
+            """Returns the loss value"""
+            if self.all_out or len(self.exemplars_dataset) > 0:
+                loss = torch.nn.functional.cross_entropy(
+                    torch.cat(outputs, dim=1), targets
+                )
+            else:
+                loss = torch.nn.functional.cross_entropy(
+                    outputs[t], targets - self.model.task_offset[t]
+                )
+        return loss

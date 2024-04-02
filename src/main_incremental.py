@@ -9,8 +9,6 @@ import torch
 import torch.multiprocessing
 from dotenv import find_dotenv, load_dotenv
 
-from metrics import cm
-
 load_dotenv(find_dotenv())
 
 import approach
@@ -304,6 +302,39 @@ def main(argv=None):
         help="Additional data augmentations (default=%(default)s)",
     )
 
+    # early-exit networks
+    parser.add_argument(
+        "--ic-layers",
+        default=None,
+        type=str,
+        nargs="+",
+        required=False,
+        help="Names of modules used to attach the internal classifers.",
+    )
+    parser.add_argument(
+        "--ic-type",
+        type=str,
+        nargs="+",
+        default=None,
+        required=False,
+        help="Type of internal classifier used for early exits.",
+    )
+    parser.add_argument(
+        "--ic-weighting",
+        type=str,
+        default="sdn",
+        required=False,
+        help="Loss weighting scheme for internal classifiers.",
+    )
+    parser.add_argument(
+        "--input-size",
+        type=int,
+        nargs="+",
+        default=None,
+        required=False,
+        help="Input size for the network, used to initialize internal classifiers.",
+    )
+
     # gridsearch args
     parser.add_argument(
         "--gridsearch-tasks",
@@ -441,7 +472,7 @@ def main(argv=None):
         argparse.Namespace(
             **args.__dict__,
             **appr_args.__dict__,
-            **appr_exemplars_dataset_args.__dict__
+            **appr_exemplars_dataset_args.__dict__,
         )
     )
 
@@ -472,7 +503,14 @@ def main(argv=None):
 
     # Network and Approach instances
     utils.seed_everything(seed=args.seed)
-    net = LLL_Net(init_model, remove_existing_head=not args.keep_existing_head)
+    net = LLL_Net(
+        init_model,
+        remove_existing_head=not args.keep_existing_head,
+        ic_layers=args.ic_layers,
+        ic_type=args.ic_type,
+        input_size=args.input_size,
+        ic_weighting=args.ic_weighting,
+    )
     utils.seed_everything(seed=args.seed)
     # taking transformations and class indices from first train dataset
     first_train_ds = trn_loader[0].dataset
@@ -509,11 +547,18 @@ def main(argv=None):
 
     # Loop tasks
     print(taskcla)
-    acc_taw = np.zeros((max_task, max_task))
-    acc_tag = np.zeros((max_task, max_task))
-    forg_taw = np.zeros((max_task, max_task))
-    forg_tag = np.zeros((max_task, max_task))
-    test_loss = np.zeros((max_task, max_task))
+    if net.is_early_exit():
+        acc_taw = np.zeros((len(net.ic_layers) + 1, max_task, max_task))
+        acc_tag = np.zeros((len(net.ic_layers) + 1, max_task, max_task))
+        forg_taw = np.zeros((len(net.ic_layers) + 1, max_task, max_task))
+        forg_tag = np.zeros((len(net.ic_layers) + 1, max_task, max_task))
+        test_loss = np.zeros((len(net.ic_layers) + 1, max_task, max_task))
+    else:
+        acc_taw = np.zeros((max_task, max_task))
+        acc_tag = np.zeros((max_task, max_task))
+        forg_taw = np.zeros((max_task, max_task))
+        forg_tag = np.zeros((max_task, max_task))
+        test_loss = np.zeros((max_task, max_task))
 
     for t, (_, ncla) in enumerate(taskcla):
 
@@ -566,110 +611,120 @@ def main(argv=None):
             appr.nepochs = args.nepochs
 
         # Test
-        for u in range(t + 1):
-            test_loss[t, u], acc_taw[t, u], acc_tag[t, u] = appr.eval(u, tst_loader[u])
-            if u < t:
-                forg_taw[t, u] = acc_taw[:t, u].max(0) - acc_taw[t, u]
-                forg_tag[t, u] = acc_tag[:t, u].max(0) - acc_tag[t, u]
-            print(
-                ">>> Test on task {:2d} : loss={:.3f} | TAw acc={:5.1f}%, forg={:5.1f}%"
-                "| TAg acc={:5.1f}%, forg={:5.1f}% <<<".format(
-                    u,
-                    test_loss[t, u],
-                    100 * acc_taw[t, u],
-                    100 * forg_taw[t, u],
-                    100 * acc_tag[t, u],
-                    100 * forg_tag[t, u],
+        if net.is_early_exit():
+            for u in range(t + 1):
+                test_loss[:, t, u], acc_taw[:, t, u], acc_tag[:, t, u] = appr.eval(
+                    u, tst_loader[u]
                 )
-            )
+                if u < t:
+                    forg_taw[:, t, u] = acc_taw[:, :t, u].max(1) - acc_taw[:, t, u]
+                    forg_tag[:, t, u] = acc_tag[:, :t, u].max(1) - acc_tag[:, t, u]
+                print(
+                    ">>> Test on task {:2d} : loss={:.3f} | TAw acc={:5.1f}%, forg={:5.1f}%"
+                    "| TAg acc={:5.1f}%, forg={:5.1f}% <<<".format(
+                        u,
+                        test_loss[-1, t, u],
+                        100 * acc_taw[-1, t, u],
+                        100 * forg_taw[-1, t, u],
+                        100 * acc_tag[-1, t, u],
+                        100 * forg_tag[-1, t, u],
+                    )
+                )
 
-        for u in range(max_task):
-            logger.log_scalar(
-                task=u, iter=t, name="loss", group="test", value=test_loss[t, u]
-            )
-            logger.log_scalar(
-                task=u, iter=t, name="acc_taw", group="test", value=100 * acc_taw[t, u]
-            )
-            logger.log_scalar(
-                task=u, iter=t, name="acc_tag", group="test", value=100 * acc_tag[t, u]
-            )
-            logger.log_scalar(
-                task=u,
-                iter=t,
-                name="forg_taw",
-                group="test",
-                value=100 * forg_taw[t, u],
-            )
-            logger.log_scalar(
-                task=u,
-                iter=t,
-                name="forg_tag",
-                group="test",
-                value=100 * forg_tag[t, u],
-            )
+            for ic_idx in range(len(net.ic_layers) + 1):
+                if ic_idx == len(net.ic_layers):
+                    group_name = "test"
+                else:
+                    group_name = f"test_ic{ic_idx}"
 
-        # Save
-        print("Save at " + os.path.join(args.results_path, full_exp_name))
-        logger.log_result(acc_taw, name="acc_taw", step=t, skip_wandb=True)
-        logger.log_result(acc_tag, name="acc_tag", step=t, skip_wandb=True)
-        logger.log_result(forg_taw, name="forg_taw", step=t, skip_wandb=True)
-        logger.log_result(forg_tag, name="forg_tag", step=t, skip_wandb=True)
-        if args.cm:
-            logger.log_result(
-                cm(appr.model, tst_loader[: t + 1], args.num_tasks, appr.device),
-                name="cm",
-                step=t,
-                title="Task confusion matrix",
-                xlabel="Predicted task",
-                ylabel="True task",
-                annot=False,
-                cmap="Blues",
-                cbar=True,
-                vmin=0,
-                vmax=1,
-            )
+                for u in range(max_task):
+                    logger.log_scalar(
+                        task=u,
+                        iter=t,
+                        name="loss",
+                        group=group_name,
+                        value=test_loss[ic_idx, t, u],
+                    )
+                    logger.log_scalar(
+                        task=u,
+                        iter=t,
+                        name="acc_taw",
+                        group=group_name,
+                        value=100 * acc_taw[ic_idx, t, u],
+                    )
+                    logger.log_scalar(
+                        task=u,
+                        iter=t,
+                        name="acc_tag",
+                        group=group_name,
+                        value=100 * acc_tag[ic_idx, t, u],
+                    )
+                    logger.log_scalar(
+                        task=u,
+                        iter=t,
+                        name="forg_taw",
+                        group=group_name,
+                        value=100 * forg_taw[ic_idx, t, u],
+                    )
+                    logger.log_scalar(
+                        task=u,
+                        iter=t,
+                        name="forg_tag",
+                        group=group_name,
+                        value=100 * forg_tag[ic_idx, t, u],
+                    )
+        else:
+            for u in range(t + 1):
+                test_loss[t, u], acc_taw[t, u], acc_tag[t, u] = appr.eval(
+                    u, tst_loader[u]
+                )
+                if u < t:
+                    forg_taw[t, u] = acc_taw[:t, u].max(0) - acc_taw[t, u]
+                    forg_tag[t, u] = acc_tag[:t, u].max(0) - acc_tag[t, u]
+                print(
+                    ">>> Test on task {:2d} : loss={:.3f} | TAw acc={:5.1f}%, forg={:5.1f}%"
+                    "| TAg acc={:5.1f}%, forg={:5.1f}% <<<".format(
+                        u,
+                        test_loss[t, u],
+                        100 * acc_taw[t, u],
+                        100 * forg_taw[t, u],
+                        100 * acc_tag[t, u],
+                        100 * forg_tag[t, u],
+                    )
+                )
 
-        logger.save_model(net.state_dict(), task=t)
-
-        avg_accs_taw = acc_taw.sum(1) / np.tril(np.ones(acc_taw.shape[0])).sum(1)
-        logger.log_result(avg_accs_taw, name="avg_accs_taw", step=t, skip_wandb=True)
-        logger.log_scalar(
-            task=None,
-            iter=t,
-            name="avg_acc_taw",
-            group="test",
-            value=100 * avg_accs_taw[t],
-        )
-        avg_accs_tag = acc_tag.sum(1) / np.tril(np.ones(acc_tag.shape[0])).sum(1)
-        logger.log_result(avg_accs_tag, name="avg_accs_tag", step=t, skip_wandb=True)
-        logger.log_scalar(
-            task=None,
-            iter=t,
-            name="avg_acc_tag",
-            group="test",
-            value=100 * avg_accs_tag[t],
-        )
-        aux = np.tril(
-            np.repeat([[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0)
-        )
-        wavg_accs_taw = (acc_taw * aux).sum(1) / aux.sum(1)
-        logger.log_result(wavg_accs_taw, name="wavg_accs_taw", step=t, skip_wandb=True)
-        logger.log_scalar(
-            task=None,
-            iter=t,
-            name="wavg_acc_taw",
-            group="test",
-            value=100 * wavg_accs_taw[t],
-        )
-        wavg_accs_tag = (acc_tag * aux).sum(1) / aux.sum(1)
-        logger.log_result(wavg_accs_tag, name="wavg_accs_tag", step=t, skip_wandb=True)
-        logger.log_scalar(
-            task=None,
-            iter=t,
-            name="wavg_acc_tag",
-            group="test",
-            value=100 * wavg_accs_tag[t],
-        )
+            for u in range(max_task):
+                logger.log_scalar(
+                    task=u, iter=t, name="loss", group="test", value=test_loss[t, u]
+                )
+                logger.log_scalar(
+                    task=u,
+                    iter=t,
+                    name="acc_taw",
+                    group="test",
+                    value=100 * acc_taw[t, u],
+                )
+                logger.log_scalar(
+                    task=u,
+                    iter=t,
+                    name="acc_tag",
+                    group="test",
+                    value=100 * acc_tag[t, u],
+                )
+                logger.log_scalar(
+                    task=u,
+                    iter=t,
+                    name="forg_taw",
+                    group="test",
+                    value=100 * forg_taw[t, u],
+                )
+                logger.log_scalar(
+                    task=u,
+                    iter=t,
+                    name="forg_tag",
+                    group="test",
+                    value=100 * forg_tag[t, u],
+                )
 
         # Last layer analysis
         if args.last_layer_analysis:
@@ -684,24 +739,71 @@ def main(argv=None):
             logger.log_figure(name="weights", iter=t, figure=weights)
             logger.log_figure(name="bias", iter=t, figure=biases)
 
-    avg_accs_taw = acc_taw.sum(1) / np.tril(np.ones(acc_taw.shape[0])).sum(1)
-    logger.log_result(avg_accs_taw, name="avg_accs_taw", step=0, skip_wandb=False)
-    avg_accs_tag = acc_tag.sum(1) / np.tril(np.ones(acc_tag.shape[0])).sum(1)
-    logger.log_result(avg_accs_tag, name="avg_accs_tag", step=0, skip_wandb=False)
-    aux = np.tril(
-        np.repeat([[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0)
-    )
-    wavg_accs_taw = (acc_taw * aux).sum(1) / aux.sum(1)
-    logger.log_result(wavg_accs_taw, name="wavg_accs_taw", step=0, skip_wandb=False)
-    wavg_accs_tag = (acc_tag * aux).sum(1) / aux.sum(1)
-    logger.log_result(wavg_accs_tag, name="wavg_accs_tag", step=0, skip_wandb=False)
+    if net.is_early_exit():
+        for ic_idx in range(len(net.ic_layers) + 1):
+            if ic_idx == len(net.ic_layers):
+                prefix = ""
+            else:
+                prefix = f"ic{ic_idx}/"
+            avg_accs_taw = acc_taw[ic_idx, :, :].sum(1) / np.tril(
+                np.ones(acc_taw[ic_idx, :, :].shape[0])
+            ).sum(1)
+            logger.log_result(
+                avg_accs_taw, name=f"{prefix}avg_accs_taw", step=0, skip_wandb=False
+            )
+            avg_accs_tag = acc_tag[ic_idx, :, :].sum(1) / np.tril(
+                np.ones(acc_tag[ic_idx, :, :].shape[0])
+            ).sum(1)
+            logger.log_result(
+                avg_accs_tag, name=f"{prefix}avg_accs_tag", step=0, skip_wandb=False
+            )
+            aux = np.tril(
+                np.repeat(
+                    [[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0
+                )
+            )
+            wavg_accs_taw = (acc_taw[ic_idx, :, :] * aux).sum(1) / aux.sum(1)
+            logger.log_result(
+                wavg_accs_taw, name=f"{prefix}wavg_accs_taw", step=0, skip_wandb=False
+            )
+            wavg_accs_tag = (acc_tag[ic_idx, :, :] * aux).sum(1) / aux.sum(1)
+            logger.log_result(
+                wavg_accs_tag, name=f"{prefix}wavg_accs_tag", step=0, skip_wandb=False
+            )
 
-    # Print Summary
-    utils.print_summary(acc_taw, acc_tag, forg_taw, forg_tag)
+        # Print Summary
+        utils.print_summary(
+            acc_taw[-1, :, :], acc_tag[-1, :, :], forg_taw[-1, :, :], forg_tag[-1, :, :]
+        )
+    else:
+        avg_accs_taw = acc_taw.sum(1) / np.tril(np.ones(acc_taw.shape[0])).sum(1)
+        logger.log_result(avg_accs_taw, name="avg_accs_taw", step=0, skip_wandb=False)
+        avg_accs_tag = acc_tag.sum(1) / np.tril(np.ones(acc_tag.shape[0])).sum(1)
+        logger.log_result(avg_accs_tag, name="avg_accs_tag", step=0, skip_wandb=False)
+        aux = np.tril(
+            np.repeat([[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0)
+        )
+        wavg_accs_taw = (acc_taw * aux).sum(1) / aux.sum(1)
+        logger.log_result(wavg_accs_taw, name="wavg_accs_taw", step=0, skip_wandb=False)
+        wavg_accs_tag = (acc_tag * aux).sum(1) / aux.sum(1)
+        logger.log_result(wavg_accs_tag, name="wavg_accs_tag", step=0, skip_wandb=False)
+
+        # Print Summary
+        utils.print_summary(acc_taw, acc_tag, forg_taw, forg_tag)
+
     print("[Elapsed time = {:.1f} h]".format((time.time() - tstart) / (60 * 60)))
     print("Done!")
 
-    return acc_taw, acc_tag, forg_taw, forg_tag, logger.exp_path
+    if net.is_early_exit():
+        return (
+            acc_taw[-1, :, :],
+            acc_tag[-1, :, :],
+            forg_taw[-1, :, :],
+            forg_tag[-1, :, :],
+            logger.exp_path,
+        )
+    else:
+        return acc_taw, acc_tag, forg_taw, forg_tag, logger.exp_path
     ####################################################################################################################
 
 

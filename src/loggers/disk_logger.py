@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -60,10 +61,12 @@ class Logger(ExperimentLogger):
     def log_result(self, array, name, step, **kwargs):
         if array.ndim <= 1:
             array = array[None]
+        path = os.path.join(
+            self.exp_path, "results", "{}-{}.txt".format(name, self.begin_time_str)
+        )
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         np.savetxt(
-            os.path.join(
-                self.exp_path, "results", "{}-{}.txt".format(name, self.begin_time_str)
-            ),
+            path,
             array,
             "%.6f",
             delimiter="\t",

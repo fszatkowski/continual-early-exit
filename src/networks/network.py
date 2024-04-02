@@ -3,11 +3,21 @@ from copy import deepcopy
 import torch
 from torch import nn
 
+from networks.ic_utils import create_ic, get_sdn_weights
+
 
 class LLL_Net(nn.Module):
     """Basic class for implementing networks"""
 
-    def __init__(self, model, remove_existing_head=False):
+    def __init__(
+        self,
+        model,
+        remove_existing_head=False,
+        ic_type=None,
+        ic_layers=None,
+        input_size=None,
+        ic_weighting="sdn",
+    ):
         head_var = model.head_var
         assert type(head_var) == str
         assert not remove_existing_head or hasattr(
@@ -38,7 +48,33 @@ class LLL_Net(nn.Module):
         else:
             self.out_size = last_layer.out_features
 
-        self.heads = nn.ModuleList()
+        if ic_layers is None:
+            ic_layers = []
+        self.ic_layers = ic_layers
+        if len(self.ic_layers) > 0:
+            # For early exits, create heads list per each IC
+            if len(ic_type) == 1:
+                self.ic_type = ic_type * len(ic_layers)
+            self.ic_type = ic_type
+            self.heads = nn.ModuleList()
+            self.ic_input_sizes = []
+            self.intermediate_output_hooks = register_intermediate_output_hooks(
+                model, ic_layers
+            )
+
+            model.eval()
+            with torch.no_grad():
+                x = torch.rand(1, *input_size)
+                model(x)
+            for hook in self.intermediate_output_hooks:
+                self.heads.append(nn.ModuleList())
+                input_size = hook.output.numel()
+                self.ic_input_sizes.append(input_size)
+            self.heads.append(nn.ModuleList())
+        else:
+            self.heads = nn.ModuleList()
+
+        self.ic_weighting = ic_weighting
         self.task_cls = []
         self.task_offset = []
         self._initialize_weights()
@@ -47,9 +83,21 @@ class LLL_Net(nn.Module):
         """Add a new head with the corresponding number of outputs. Also update the number of classes per task and the
         corresponding offsets
         """
-        self.heads.append(nn.Linear(self.out_size, num_outputs))
+        if len(self.ic_layers) == 0:
+            self.heads.append(nn.Linear(self.out_size, num_outputs))
+        else:
+            for i in range(len(self.heads[:-1])):
+                self.heads[i].append(
+                    create_ic(self.ic_type[i], self.ic_input_sizes[i], num_outputs)
+                )
+            self.heads[-1].append(nn.Linear(self.out_size, num_outputs))
+
         # we re-compute instead of append in case an approach makes changes to the heads
-        self.task_cls = torch.tensor([head.out_features for head in self.heads])
+        if len(self.ic_layers) == 0:
+            final_heads = self.heads
+        else:
+            final_heads = self.heads[-1]
+        self.task_cls = torch.tensor([head.out_features for head in final_heads])
         self.task_offset = torch.cat(
             [torch.LongTensor(1).zero_(), self.task_cls.cumsum(0)[:-1]]
         )
@@ -62,15 +110,36 @@ class LLL_Net(nn.Module):
             x (tensor): input images
             return_features (bool): return the representations before the heads
         """
-        x = self.model(x)
-        assert len(self.heads) > 0, "Cannot access any head"
-        y = []
-        for head in self.heads:
-            y.append(head(x))
-        if return_features:
-            return y, x
+        if len(self.ic_layers) == 0:
+            x = self.model(x)
+            assert len(self.heads) > 0, "Cannot access any head"
+            y = []
+            for head in self.heads:
+                y.append(head(x))
+            if return_features:
+                return y, x
+            else:
+                return y
         else:
-            return y
+            features = []
+            outputs = []
+
+            final_features = self.model(x)
+            for i, feature_hook in enumerate(self.intermediate_output_hooks):
+                intermediate_output = feature_hook.output
+                features.append(intermediate_output)
+            features.append(final_features)
+
+            for features, heads in zip(features, self.heads):
+                head_outputs = []
+                for head in heads:
+                    head_outputs.append(head(features))
+                outputs.append(head_outputs)
+
+            if return_features:
+                return outputs, features
+            else:
+                return outputs
 
     def get_copy(self):
         """Get weights from the model"""
@@ -120,3 +189,33 @@ class LLL_Net(nn.Module):
         """Initialize weights using different strategies"""
         # TODO: add different initialization strategies
         pass
+
+    def is_early_exit(self):
+        return len(self.ic_layers) > 0
+
+    def get_ic_weights(self, current_epoch, max_epochs):
+        if self.ic_weighting == "sdn":
+            return get_sdn_weights(current_epoch, max_epochs)
+        elif self.ic_weighting == "uniform":
+            return [1.0] * (len(self.ic_layers) + 1)
+        else:
+            raise NotImplementedError()
+
+
+class RegisterForwardHook:
+    def __init__(self):
+        self.output = None
+
+    def __call__(self, module, input, output):
+        self.output = output
+
+
+def register_intermediate_output_hooks(model, layers):
+    hooks = []
+    for layer in layers:
+        for name, module in model.named_modules():
+            if name == layer:
+                hook = RegisterForwardHook()
+                module.register_forward_hook(hook)
+                hooks.append(hook)
+    return hooks
