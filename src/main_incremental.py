@@ -726,6 +726,47 @@ def main(argv=None):
                     value=100 * forg_tag[t, u],
                 )
 
+        # Log average accuracy
+        if net.is_early_exit():
+            for i in range(len(net.ic_layers) + 1):
+                avg_acc_taw = acc_taw[i, : t + 1].mean()
+                avg_acc_tag = acc_tag[i, : t + 1].mean()
+                if i == len(net.ic_layers):
+                    suffix = ""
+                else:
+                    suffix = f"_ic{i}"
+                logger.log_scalar(
+                    task=None,
+                    iter=None,
+                    name=f"avg_acc_taw{suffix}",
+                    group="test",
+                    value=float(avg_acc_taw),
+                )
+                logger.log_scalar(
+                    task=None,
+                    iter=None,
+                    name=f"avg_acc_tag{suffix}",
+                    group="test",
+                    value=float(avg_acc_tag),
+                )
+        else:
+            avg_acc_tag = acc_tag[t, : t + 1].mean()
+            avg_acc_taw = acc_taw[t, : t + 1].mean()
+            logger.log_scalar(
+                task=None,
+                iter=None,
+                name="avg_acc_taw",
+                group="test",
+                value=float(avg_acc_taw),
+            )
+            logger.log_scalar(
+                task=None,
+                iter=None,
+                name="avg_acc_tag",
+                group="test",
+                value=float(avg_acc_tag),
+            )
+
         # Last layer analysis
         if args.last_layer_analysis:
             weights, biases = last_layer_analysis(net.heads, t, taskcla, y_lim=True)
@@ -738,58 +779,6 @@ def main(argv=None):
             )
             logger.log_figure(name="weights", iter=t, figure=weights)
             logger.log_figure(name="bias", iter=t, figure=biases)
-
-    if net.is_early_exit():
-        for ic_idx in range(len(net.ic_layers) + 1):
-            if ic_idx == len(net.ic_layers):
-                prefix = ""
-            else:
-                prefix = f"ic{ic_idx}/"
-            avg_accs_taw = acc_taw[ic_idx, :, :].sum(1) / np.tril(
-                np.ones(acc_taw[ic_idx, :, :].shape[0])
-            ).sum(1)
-            logger.log_result(
-                avg_accs_taw, name=f"{prefix}avg_accs_taw", step=0, skip_wandb=False
-            )
-            avg_accs_tag = acc_tag[ic_idx, :, :].sum(1) / np.tril(
-                np.ones(acc_tag[ic_idx, :, :].shape[0])
-            ).sum(1)
-            logger.log_result(
-                avg_accs_tag, name=f"{prefix}avg_accs_tag", step=0, skip_wandb=False
-            )
-            aux = np.tril(
-                np.repeat(
-                    [[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0
-                )
-            )
-            wavg_accs_taw = (acc_taw[ic_idx, :, :] * aux).sum(1) / aux.sum(1)
-            logger.log_result(
-                wavg_accs_taw, name=f"{prefix}wavg_accs_taw", step=0, skip_wandb=False
-            )
-            wavg_accs_tag = (acc_tag[ic_idx, :, :] * aux).sum(1) / aux.sum(1)
-            logger.log_result(
-                wavg_accs_tag, name=f"{prefix}wavg_accs_tag", step=0, skip_wandb=False
-            )
-
-        # Print Summary
-        utils.print_summary(
-            acc_taw[-1, :, :], acc_tag[-1, :, :], forg_taw[-1, :, :], forg_tag[-1, :, :]
-        )
-    else:
-        avg_accs_taw = acc_taw.sum(1) / np.tril(np.ones(acc_taw.shape[0])).sum(1)
-        logger.log_result(avg_accs_taw, name="avg_accs_taw", step=0, skip_wandb=False)
-        avg_accs_tag = acc_tag.sum(1) / np.tril(np.ones(acc_tag.shape[0])).sum(1)
-        logger.log_result(avg_accs_tag, name="avg_accs_tag", step=0, skip_wandb=False)
-        aux = np.tril(
-            np.repeat([[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0)
-        )
-        wavg_accs_taw = (acc_taw * aux).sum(1) / aux.sum(1)
-        logger.log_result(wavg_accs_taw, name="wavg_accs_taw", step=0, skip_wandb=False)
-        wavg_accs_tag = (acc_tag * aux).sum(1) / aux.sum(1)
-        logger.log_result(wavg_accs_tag, name="wavg_accs_tag", step=0, skip_wandb=False)
-
-        # Print Summary
-        utils.print_summary(acc_taw, acc_tag, forg_taw, forg_tag)
 
     print("[Elapsed time = {:.1f} h]".format((time.time() - tstart) / (60 * 60)))
     print("Done!")
