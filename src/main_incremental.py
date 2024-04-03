@@ -9,6 +9,8 @@ import torch
 import torch.multiprocessing
 from dotenv import find_dotenv, load_dotenv
 
+from ee_utils import evaluate_ee_network
+
 load_dotenv(find_dotenv())
 
 import approach
@@ -790,6 +792,14 @@ def main(argv=None):
 
         # Print Summary
         utils.print_summary(acc_taw, acc_tag, forg_taw, forg_tag)
+
+    if net.is_early_exit():
+        print("Running final early exit evaluation...")
+        th_granularity = 0.001
+        ee_thresholds = [th_granularity * i for i in range(int(1 / th_granularity) + 1)]
+        for t in range(max_task):
+            ic_outputs_t, th_outputs, th_costs = evaluate_ee_network(net, tst_loader[t], ee_thresholds)
+            # TODO write evaluation code for early exit net
 
     print("[Elapsed time = {:.1f} h]".format((time.time() - tstart) / (60 * 60)))
     print("Done!")
