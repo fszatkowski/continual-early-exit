@@ -240,7 +240,7 @@ class Appr(Inc_Learning_Appr):
         if self.cka and t > 0 and self.training:
             _cka = cka(self.model, self.model_old, val_loader, self.device)
             self.logger.log_scalar(
-                task=None, iter=None, name=f"t_{t}", group=f"cka", value=_cka
+                task=None, iter=None, name=f"t_{t}", group="cka", value=_cka
             )
 
         return (

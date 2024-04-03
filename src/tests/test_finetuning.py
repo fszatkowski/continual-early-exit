@@ -93,3 +93,11 @@ def test_finetuning_with_diff_epochs_first_task():
     args_line = FAST_LOCAL_TEST_ARGS
     args_line += " --nc-first-task 6 --ne-first-task 1"
     run_main_and_assert(args_line)
+
+
+def test_finetuning_with_early_exits():
+    args_line = FAST_LOCAL_TEST_ARGS
+    args_line += " --ic-type standard_conv standard_conv standard_fc"
+    args_line += " --ic-layers conv1 conv2 fc1"
+    args_line += " --input-size 1 28 28"
+    run_main_and_assert(args_line)

@@ -130,6 +130,8 @@ class LLL_Net(nn.Module):
                 features.append(intermediate_output)
             features.append(final_features)
 
+            assert len(features) == len(self.ic_layers) + 1
+
             for features, heads in zip(features, self.heads):
                 head_outputs = []
                 for head in heads:
@@ -212,10 +214,18 @@ class RegisterForwardHook:
 
 def register_intermediate_output_hooks(model, layers):
     hooks = []
-    for layer in layers:
-        for name, module in model.named_modules():
-            if name == layer:
+    modules = [(name, module) for name, module in model.named_modules()]
+    module_names = [n for n, _ in modules]
+    for layer_name in layers:
+        module_found = False
+        for module_name, module in modules:
+            if module_name == layer_name:
                 hook = RegisterForwardHook()
                 module.register_forward_hook(hook)
                 hooks.append(hook)
+                print(f"Attaching IC to the layer {layer_name}...")
+                module_found = True
+                break
+        if not module_found:
+            raise ValueError(f"Could not find module {layer_name} to attach the IC.")
     return hooks

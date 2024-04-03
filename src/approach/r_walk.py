@@ -2,7 +2,6 @@ import itertools
 from argparse import ArgumentParser
 
 import torch
-from torch.utils.data import DataLoader
 
 from datasets.exemplars_dataset import ExemplarsDataset
 

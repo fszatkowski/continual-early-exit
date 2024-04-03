@@ -212,7 +212,7 @@ class Inc_Learning_Appr:
             # Forward current model
             outputs = self.model(images)
             loss = self.criterion(t, outputs, targets)
-            if isinstance(loss, list):
+            if self.model.is_early_exit():
                 loss = sum(loss)
             # Backward
             if t == 0 or not self.no_learning:
@@ -260,6 +260,10 @@ class Inc_Learning_Appr:
                     total_acc_taw += hits_taw.sum().item()
                     total_acc_tag += hits_tag.sum().item()
                     total_num += len(targets)
+
+            if self.model.is_early_exit():
+                total_num //= len(self.model.ic_layers) + 1
+
         return (
             total_loss / total_num,
             total_acc_taw / total_num,
@@ -290,13 +294,19 @@ class Inc_Learning_Appr:
 
     def log_results(self, t, e, loss, acc, group):
         if self.model.is_early_exit():
-            for i, (loss, acc) in enumerate(zip(loss, acc)):
+            for i, (l, a) in enumerate(zip(loss[:-1], acc[:-1])):
                 self.logger.log_scalar(
-                    task=t, iter=e + 1, name=f"loss_c_{i}", value=loss, group=group
+                    task=t, iter=e + 1, name=f"loss_c_{i}", value=l, group=group
                 )
                 self.logger.log_scalar(
-                    task=t, iter=e + 1, name=f"acc_c_{i}", value=100 * acc, group=group
+                    task=t, iter=e + 1, name=f"acc_c_{i}", value=100 * a, group=group
                 )
+            self.logger.log_scalar(
+                task=t, iter=e + 1, name=f"loss", value=loss[-1], group=group
+            )
+            self.logger.log_scalar(
+                task=t, iter=e + 1, name=f"acc", value=100 * acc[-1], group=group
+            )
         else:
             self.logger.log_scalar(
                 task=t, iter=e + 1, name="loss", value=loss, group=group

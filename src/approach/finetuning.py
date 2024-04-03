@@ -136,6 +136,7 @@ class Appr(Inc_Learning_Appr):
                             ic_outputs[t], targets - self.model.task_offset[t]
                         )
                     )
+            assert len(loss) == len(self.model.ic_layers) + 1
         else:
             """Returns the loss value"""
             if self.all_out or len(self.exemplars_dataset) > 0:
