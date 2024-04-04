@@ -75,6 +75,7 @@ class LLL_Net(nn.Module):
             self.heads = nn.ModuleList()
 
         self.ic_weighting = ic_weighting
+        self.exit_layer_idx = None
         self.task_cls = []
         self.task_offset = []
         self._initialize_weights()
@@ -138,10 +139,27 @@ class LLL_Net(nn.Module):
                     head_outputs.append(head(features))
                 outputs.append(head_outputs)
 
-            if return_features:
-                return outputs, features
+            if self.exit_layer_idx == -1:
+                # for baseline no-ee net profiling
+                if return_features:
+                    return outputs[-1], features[-1]
+                else:
+                    return outputs[-1]
+            elif self.exit_layer_idx is not None:
+                # for ee cost profiling
+                if return_features:
+                    return (
+                        outputs[: self.exit_layer_idx + 1],
+                        features[: self.exit_layer_idx + 1],
+                    )
+                else:
+                    return outputs[: self.exit_layer_idx + 1]
             else:
-                return outputs
+                # standard case
+                if return_features:
+                    return outputs, features
+                else:
+                    return outputs
 
     def get_copy(self):
         """Get weights from the model"""
@@ -202,6 +220,9 @@ class LLL_Net(nn.Module):
             return [1.0] * (len(self.ic_layers) + 1)
         else:
             raise NotImplementedError()
+
+    def set_exit_layer(self, layer_idx: int):
+        self.exit_layer_idx = layer_idx
 
 
 class RegisterForwardHook:

@@ -9,14 +9,16 @@ import torch
 import torch.multiprocessing
 from dotenv import find_dotenv, load_dotenv
 
-from ee_utils import evaluate_ee_network
-
 load_dotenv(find_dotenv())
+
+from pathlib import Path
 
 import approach
 import utils
 from datasets.data_loader import get_loaders
 from datasets.dataset_config import dataset_config
+from early_exits.eval import combine_ee_eval_results
+from early_exits.visualize import visualize_ee_results
 from last_layer_analysis import last_layer_analysis
 from loggers.exp_logger import MultiLogger
 from networks import allmodels, set_tvmodel_head_var, tvmodels
@@ -796,10 +798,31 @@ def main(argv=None):
     if net.is_early_exit():
         print("Running final early exit evaluation...")
         th_granularity = 0.001
-        ee_thresholds = [th_granularity * i for i in range(int(1 / th_granularity) + 1)]
-        for t in range(max_task):
-            ic_outputs_t, th_outputs, th_costs = evaluate_ee_network(net, tst_loader[t], ee_thresholds)
-            # TODO write evaluation code for early exit net
+        ee_thresholds = torch.tensor(
+            [th_granularity * i for i in range(int(1 / th_granularity) + 1)]
+        )
+        exit_costs = None
+        baseline_cost = None
+        results = {}
+        for u in range(max_task):
+            exit_costs, baseline_cost, per_ic_acc, per_th_acc, per_th_exit_cnt = (
+                appr.eval_early_exit(
+                    u, tst_loader[u], ee_thresholds, exit_costs, baseline_cost
+                )
+            )
+            results[u] = {
+                "exit_costs": exit_costs,
+                "baseline_cost": baseline_cost,
+                "per_ic_acc": per_ic_acc,
+                "per_th_acc": per_th_acc,
+                "per_th_exit_cnt": per_th_exit_cnt,
+            }
+        avg_results = combine_ee_eval_results(results)
+        results["avg"] = avg_results
+        results_path = Path(logger.exp_path) / "results" / "ee_eval.json"
+        np.save(results_path, results)
+        plot_path = Path(logger.exp_path) / "results" / "ee_eval.png"
+        visualize_ee_results(results["avg"], plot_path)
 
     print("[Elapsed time = {:.1f} h]".format((time.time() - tstart) / (60 * 60)))
     print("Done!")
@@ -812,6 +835,7 @@ def main(argv=None):
             forg_tag[-1, :, :],
             logger.exp_path,
         )
+
     else:
         return acc_taw, acc_tag, forg_taw, forg_tag, logger.exp_path
     ####################################################################################################################
