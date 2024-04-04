@@ -1,4 +1,3 @@
-import os
 from os.path import join
 
 _BASE_DATA_PATH = "../data"

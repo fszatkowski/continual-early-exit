@@ -7,7 +7,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.nn import Module, Parameter
-from torch.utils.data import DataLoader
 
 from datasets.exemplars_dataset import ExemplarsDataset
 

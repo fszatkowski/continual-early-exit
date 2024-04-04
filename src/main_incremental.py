@@ -11,10 +11,14 @@ from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv())
 
+from pathlib import Path
+
 import approach
 import utils
 from datasets.data_loader import get_loaders
 from datasets.dataset_config import dataset_config
+from early_exits.eval import combine_ee_eval_results
+from early_exits.visualize import visualize_ee_results
 from last_layer_analysis import last_layer_analysis
 from loggers.exp_logger import MultiLogger
 from networks import allmodels, set_tvmodel_head_var, tvmodels
@@ -779,6 +783,87 @@ def main(argv=None):
             )
             logger.log_figure(name="weights", iter=t, figure=weights)
             logger.log_figure(name="bias", iter=t, figure=biases)
+
+    if net.is_early_exit():
+        for ic_idx in range(len(net.ic_layers) + 1):
+            if ic_idx == len(net.ic_layers):
+                prefix = ""
+            else:
+                prefix = f"ic{ic_idx}/"
+            avg_accs_taw = acc_taw[ic_idx, :, :].sum(1) / np.tril(
+                np.ones(acc_taw[ic_idx, :, :].shape[0])
+            ).sum(1)
+            logger.log_result(
+                avg_accs_taw, name=f"{prefix}avg_accs_taw", step=0, skip_wandb=False
+            )
+            avg_accs_tag = acc_tag[ic_idx, :, :].sum(1) / np.tril(
+                np.ones(acc_tag[ic_idx, :, :].shape[0])
+            ).sum(1)
+            logger.log_result(
+                avg_accs_tag, name=f"{prefix}avg_accs_tag", step=0, skip_wandb=False
+            )
+            aux = np.tril(
+                np.repeat(
+                    [[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0
+                )
+            )
+            wavg_accs_taw = (acc_taw[ic_idx, :, :] * aux).sum(1) / aux.sum(1)
+            logger.log_result(
+                wavg_accs_taw, name=f"{prefix}wavg_accs_taw", step=0, skip_wandb=False
+            )
+            wavg_accs_tag = (acc_tag[ic_idx, :, :] * aux).sum(1) / aux.sum(1)
+            logger.log_result(
+                wavg_accs_tag, name=f"{prefix}wavg_accs_tag", step=0, skip_wandb=False
+            )
+
+        # Print Summary
+        utils.print_summary(
+            acc_taw[-1, :, :], acc_tag[-1, :, :], forg_taw[-1, :, :], forg_tag[-1, :, :]
+        )
+    else:
+        avg_accs_taw = acc_taw.sum(1) / np.tril(np.ones(acc_taw.shape[0])).sum(1)
+        logger.log_result(avg_accs_taw, name="avg_accs_taw", step=0, skip_wandb=False)
+        avg_accs_tag = acc_tag.sum(1) / np.tril(np.ones(acc_tag.shape[0])).sum(1)
+        logger.log_result(avg_accs_tag, name="avg_accs_tag", step=0, skip_wandb=False)
+        aux = np.tril(
+            np.repeat([[tdata[1] for tdata in taskcla[:max_task]]], max_task, axis=0)
+        )
+        wavg_accs_taw = (acc_taw * aux).sum(1) / aux.sum(1)
+        logger.log_result(wavg_accs_taw, name="wavg_accs_taw", step=0, skip_wandb=False)
+        wavg_accs_tag = (acc_tag * aux).sum(1) / aux.sum(1)
+        logger.log_result(wavg_accs_tag, name="wavg_accs_tag", step=0, skip_wandb=False)
+
+        # Print Summary
+        utils.print_summary(acc_taw, acc_tag, forg_taw, forg_tag)
+
+    if net.is_early_exit():
+        print("Running final early exit evaluation...")
+        th_granularity = 0.001
+        ee_thresholds = torch.tensor(
+            [th_granularity * i for i in range(int(1 / th_granularity) + 1)]
+        )
+        exit_costs = None
+        baseline_cost = None
+        results = {}
+        for u in range(max_task):
+            exit_costs, baseline_cost, per_ic_acc, per_th_acc, per_th_exit_cnt = (
+                appr.eval_early_exit(
+                    u, tst_loader[u], ee_thresholds, exit_costs, baseline_cost
+                )
+            )
+            results[u] = {
+                "exit_costs": exit_costs,
+                "baseline_cost": baseline_cost,
+                "per_ic_acc": per_ic_acc,
+                "per_th_acc": per_th_acc,
+                "per_th_exit_cnt": per_th_exit_cnt,
+            }
+        avg_results = combine_ee_eval_results(results)
+        results["avg"] = avg_results
+        results_path = Path(logger.exp_path) / "results" / "ee_eval.json"
+        np.save(results_path, results)
+        plot_path = Path(logger.exp_path) / "results" / "ee_eval.png"
+        visualize_ee_results(results["avg"], plot_path)
 
     print("[Elapsed time = {:.1f} h]".format((time.time() - tstart) / (60 * 60)))
     print("Done!")
