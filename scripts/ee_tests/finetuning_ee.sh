@@ -19,7 +19,7 @@ python src/main_incremental.py \
   --gpu 0 \
   --seed ${seed} \
   --network resnet32 \
-  --ic-layers layer1.2 layer1.4 layer2.1 layer2.3 layer3.0 layer3.2 \
+  --ic-layers layer1.1 layer1.3 layer2.1 layer2.3 layer3.0 layer3.2 \
   --ic-type standard_conv standard_conv standard_conv standard_conv standard_conv standard_conv \
   --ic-weighting sdn \
   --input-size 3 32 32 \
