@@ -286,6 +286,9 @@ class Appr(Inc_Learning_Appr):
                         ic_outputs[t], targets - self.model.task_offset[t]
                     )
 
+                loss_ce = loss_ce * ic_weights[i]
+                loss_kd = loss_kd * ic_weights[i]
+
                 losses_ce.append(loss_ce)
                 losses_kd.append(loss_kd)
                 losses_total.append(self.lamb * loss_kd + loss_ce)

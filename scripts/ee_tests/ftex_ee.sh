@@ -12,7 +12,8 @@ conda activate FACIL
 num_tasks=10
 n_epochs=200
 tag="test"
-approach='lwf'
+approach='finetuning'
+num_exemplars=2000
 
 for seed in 0 1 2; do
   python src/main_incremental.py \
@@ -25,23 +26,20 @@ for seed in 0 1 2; do
     --input-size 3 32 32 \
     --datasets cifar100_icarl \
     --num-tasks ${num_tasks} \
-    --num-exemplars 0 \
+    --num-exemplars ${num_exemplars} \
     --use-test-as-val \
     --nepochs ${n_epochs} \
     --batch-size 128 \
     --lr 0.1 \
     --approach ${approach} \
-    --taskwise-kd \
-    --lamb 1 \
     --log disk wandb \
-    --results-path ./results/CIFAR100/${approach}_ee/${num_tasks}splits/seed${seed} \
+    --results-path ./results/CIFAR100/${approach}_ex${num_exemplars}_ee/${num_tasks}splits/seed${seed} \
     --exp-name ee_${tag} \
     --save-models \
     --tags ${tag} &
 done
 
 wait
-
 
 for seed in 0 1 2; do
   python src/main_incremental.py \
@@ -54,17 +52,15 @@ for seed in 0 1 2; do
     --input-size 3 32 32 \
     --datasets cifar100_icarl \
     --num-tasks ${num_tasks} \
-    --num-exemplars 0 \
+    --num-exemplars ${num_exemplars} \
     --use-test-as-val \
     --nepochs ${n_epochs} \
     --batch-size 128 \
     --lr 0.1 \
     --approach ${approach} \
-    --taskwise-kd \
-    --lamb 1 \
     --log disk wandb \
-    --results-path ./results/CIFAR100/${approach}_ee_uniform_weighting/${num_tasks}splits/seed${seed} \
-    --exp-name ee_${tag}_uniform_weighting \
+    --results-path ./results/CIFAR100/${approach}_ex${num_exemplars}_ee_uniform_weighting/${num_tasks}splits/seed${seed} \
+    --exp-name ee_${tag}_uniform \
     --save-models \
     --tags ${tag} &
 done
