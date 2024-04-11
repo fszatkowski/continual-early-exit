@@ -78,7 +78,11 @@ class Inc_Learning_Appr:
             # No exemplars case
             base_params = list(self.model.model.parameters())
             if self.model.is_early_exit():
-                head_params = [p for ic_heads in self.model.heads for p in ic_heads[-1].parameters()]
+                head_params = [
+                    p
+                    for ic_heads in self.model.heads
+                    for p in ic_heads[-1].parameters()
+                ]
             else:
                 head_params = list(self.model.heads[-1].parameters())
             params = base_params + head_params

@@ -1,6 +1,7 @@
 import time
 from argparse import ArgumentParser
 from copy import deepcopy
+from typing import Optional
 
 import numpy as np
 import torch
@@ -67,8 +68,12 @@ class Appr(Inc_Learning_Appr):
         self.model_old = None
         self.T = T
         self.lamb = lamb
-        self.bias_layers = nn.ModuleList([])
-
+        if self.model.is_early_exit():
+            self.bias_layers = torch.nn.ModuleList(
+                [torch.nn.ModuleList([]) for _ in range(len(self.model.ic_layers) + 1)]
+            )
+        else:
+            self.bias_layers = torch.nn.ModuleList([])
         self.x_valid_exemplars = []
         self.y_valid_exemplars = []
 
@@ -131,8 +136,16 @@ class Appr(Inc_Learning_Appr):
     def bias_forward(self, outputs):
         """Utility function --- inspired by https://github.com/sairin1202/BIC"""
         bic_outputs = []
-        for m in range(len(outputs)):
-            bic_outputs.append(self.bias_layers[m](outputs[m]))
+        if self.model.is_early_exit():
+            for ic_idx in range(len(outputs)):
+                ic_bic_outputs = []
+                ic_outputs = outputs[ic_idx]
+                for m in range(len(ic_outputs)):
+                    ic_bic_outputs.append(self.bias_layers[ic_idx][m](ic_outputs[m]))
+                bic_outputs.append(ic_bic_outputs)
+        else:
+            for m in range(len(outputs)):
+                bic_outputs.append(self.bias_layers[m](outputs[m]))
         return bic_outputs
 
     def train_loop(self, t, trn_loader, val_loader):
@@ -141,8 +154,11 @@ class Appr(Inc_Learning_Appr):
         """
         # add a bias layer for the new classes
 
-
-        self.bias_layers.append(BiasLayer().to(self.device, non_blocking=True))
+        if self.model.is_early_exit():
+            for bias_head_list in self.bias_layers:
+                bias_head_list.append(BiasLayer().to(self.device, non_blocking=True))
+        else:
+            self.bias_layers.append(BiasLayer().to(self.device, non_blocking=True))
 
         # STAGE 0: EXEMPLAR MANAGEMENT -- select subset of validation to use in Stage 2 -- val_old, val_new (Fig.2)
         print("Stage 0: Select exemplars from validation")
@@ -258,46 +274,96 @@ class Appr(Inc_Learning_Appr):
             # bias optimization on validation
             self.model.eval()
             # Allow to learn the alpha and beta for the current task
-            self.bias_layers[t].alpha.requires_grad = True
-            self.bias_layers[t].beta.requires_grad = True
+            if self.model.is_early_exit():
+                for ic_biases in self.bias_layers:
+                    ic_biases[t].alpha.requires_grad = True
+                    ic_biases[t].beta.requires_grad = True
+
+                params = []
+                for ic_biases in self.bias_layers:
+                    params += list(ic_biases[t].parameters())
+            else:
+                self.bias_layers[t].alpha.requires_grad = True
+                self.bias_layers[t].beta.requires_grad = True
+
+                params = list(self.bias_layers[t].parameters())
 
             # In their code is specified that momentum is always 0.9
-            bic_optimizer = torch.optim.SGD(
-                self.bias_layers[t].parameters(), lr=self.lr, momentum=0.9
-            )
+            bic_optimizer = torch.optim.SGD(params, lr=self.lr, momentum=0.9)
             # Loop epochs
             for e in range(self.bias_epochs):
                 # Train bias correction layers
                 clock0 = time.time()
-                total_loss, total_acc = 0, 0
+
+                if self.model.is_early_exit():
+                    total_loss, total_acc = np.zeros(len(self.bias_layers)), np.zeros(
+                        len(self.bias_layers)
+                    )
+                else:
+                    total_loss, total_acc = 0, 0
+
                 for inputs, targets in bic_val_loader:
+                    inputs = inputs.to(self.device, non_blocking=True)
+                    targets = targets.to(self.device, non_blocking=True)
+
                     # Forward current model
                     with torch.no_grad():
-                        outputs = self.model(inputs.to(self.device, non_blocking=True))
-                        old_cls_outs = self.bias_forward(outputs[:t])
-                    new_cls_outs = self.bias_layers[t](outputs[t])
-                    pred_all_classes = torch.cat(
-                        [torch.cat(old_cls_outs, dim=1), new_cls_outs], dim=1
-                    )
-                    # Eqs. 4-5: outputs from previous tasks are not modified (any alpha or beta from those is fixed),
-                    #           only alpha and beta from the new task is learned. No temperature scaling used.
-                    loss = torch.nn.functional.cross_entropy(
-                        pred_all_classes, targets.to(self.device, non_blocking=True)
-                    )
-                    # However, in their code, they apply a 0.1 * L2-loss to the gamma variable (beta in the paper)
-                    loss += 0.1 * ((self.bias_layers[t].beta[0] ** 2) / 2)
-                    # Log
-                    total_loss += loss.item() * len(targets)
-                    total_acc += (
-                        (
-                            (
-                                pred_all_classes.argmax(1)
-                                == targets.to(self.device, non_blocking=True)
-                            ).float()
+                        outputs = self.model(inputs)
+                        old_cls_outs = self.bias_forward([o[:t] for o in outputs])
+
+                    if self.model.is_early_exit():
+                        new_cls_outs = [
+                            self.bias_layers[ic_idx][t](outputs[ic_idx][t])
+                            for ic_idx in range(len(outputs))
+                        ]
+                        pred_all_classes = [
+                            torch.cat(
+                                [
+                                    torch.cat(old_cls_outs[ic_idx], dim=1),
+                                    new_cls_outs[ic_idx],
+                                ],
+                                dim=1,
+                            )
+                            for ic_idx in range(len(outputs))
+                        ]
+                        loss = 0
+                        for ic_idx in range(len(outputs)):
+                            ic_loss = torch.nn.functional.cross_entropy(
+                                pred_all_classes[ic_idx], targets
+                            )
+                            ic_loss += 0.1 * (
+                                (self.bias_layers[ic_idx][t].beta[0] ** 2) / 2
+                            )
+                            total_loss[ic_idx] += ic_loss.item() * len(targets)
+                            total_acc[ic_idx] += (
+                                (
+                                    (
+                                        pred_all_classes[ic_idx].argmax(1) == targets
+                                    ).float()
+                                )
+                                .sum()
+                                .item()
+                            )
+                            loss += ic_loss
+                    else:
+                        new_cls_outs = self.bias_layers[t](outputs[t])
+                        pred_all_classes = torch.cat(
+                            [torch.cat(old_cls_outs, dim=1), new_cls_outs], dim=1
                         )
-                        .sum()
-                        .item()
-                    )
+                        # Eqs. 4-5: outputs from previous tasks are not modified (any alpha or beta from those is fixed),
+                        #           only alpha and beta from the new task is learned. No temperature scaling used.
+                        loss = torch.nn.functional.cross_entropy(
+                            pred_all_classes, targets
+                        )
+                        # However, in their code, they apply a 0.1 * L2-loss to the gamma variable (beta in the paper)
+                        loss += 0.1 * ((self.bias_layers[t].beta[0] ** 2) / 2)
+                        # Log
+                        total_loss += loss.item() * len(targets)
+                        total_acc += (
+                            ((pred_all_classes.argmax(1) == targets).float())
+                            .sum()
+                            .item()
+                        )
                     # Backward
                     bic_optimizer.zero_grad()
                     loss.backward()
@@ -305,27 +371,51 @@ class Appr(Inc_Learning_Appr):
                 clock1 = time.time()
                 # reducing the amount of verbose
                 if (e + 1) % (self.bias_epochs / 4) == 0:
+                    if self.model.is_early_exit():
+                        loss_placeholder = (
+                            total_loss / len(bic_val_loader.dataset.labels)
+                        ).tolist()
+                        acc_placeholder = (
+                            100 * total_acc / len(bic_val_loader.dataset.labels)
+                        ).tolist()
+                        loss_placeholder = [round(l, 4) for l in loss_placeholder]
+                        acc_placeholder = [round(a, 4) for a in acc_placeholder]
+                    else:
+                        loss_placeholder = total_loss / len(
+                            bic_val_loader.dataset.labels
+                        )
+                        acc_placeholder = (
+                            100 * total_acc / len(bic_val_loader.dataset.labels)
+                        )
+                        loss_placeholder = round(loss_placeholder, 4)
+                        acc_placeholder = round(acc_placeholder, 4)
+
                     print(
-                        "| Epoch {:3d}, time={:5.1f}s | Train: loss={:.3f}, TAg acc={:5.1f}% |".format(
+                        "| Epoch {:3d}, time={:5.1f}s | Train: loss={}, TAg acc={}% |".format(
                             e + 1,
                             clock1 - clock0,
-                            total_loss / len(bic_val_loader.dataset.labels),
-                            100 * total_acc / len(bic_val_loader.dataset.labels),
+                            loss_placeholder,
+                            acc_placeholder,
                         )
                     )
             # Fix alpha and beta after learning them
-            self.bias_layers[t].alpha.requires_grad = False
-            self.bias_layers[t].beta.requires_grad = False
+            if self.model.is_early_exit():
+                for ic_biases in self.bias_layers:
+                    ic_biases[t].alpha.requires_grad = False
+                    ic_biases[t].beta.requires_grad = False
+            else:
+                self.bias_layers[t].alpha.requires_grad = False
+                self.bias_layers[t].beta.requires_grad = False
 
         # Print all alpha and beta values
-        for task in range(t + 1):
-            print(
-                "Stage 2: BiC training for Task {:d}: alpha={:.5f}, beta={:.5f}".format(
-                    task,
-                    self.bias_layers[task].alpha.item(),
-                    self.bias_layers[task].beta.item(),
-                )
-            )
+        # for task in range(t + 1):
+        #     print(
+        #         "Stage 2: BiC training for Task {:d}: alpha={:.5f}, beta={:.5f}".format(
+        #             task,
+        #             self.bias_layers[task].alpha.item(),
+        #             self.bias_layers[task].beta.item(),
+        #         )
+        #     )
 
         # STAGE 3: EXEMPLAR MANAGEMENT
         self.exemplars_dataset.collect_exemplars(
@@ -349,18 +439,32 @@ class Appr(Inc_Learning_Appr):
             loss = self.criterion(
                 t, outputs, targets.to(self.device, non_blocking=True), targets_old
             )
+            if self.model.is_early_exit():
+                loss = sum(loss)
+            assert not torch.isnan(loss), "Loss is NaN"
+
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clipgrad)
             self.optimizer.step()
+
         if self.scheduler is not None:
             self.scheduler.step()
 
     def eval(self, t, val_loader):
         """Contains the evaluation code"""
         with torch.no_grad():
-            total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
+            if self.model.is_early_exit():
+                total_loss, total_acc_taw, total_acc_tag, total_num = (
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                )
+            else:
+                total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
+
             self.model.eval()
             for images, targets in val_loader:
                 images = images.to(self.device, non_blocking=True)
@@ -378,12 +482,26 @@ class Appr(Inc_Learning_Appr):
                 loss = self.criterion(
                     t, outputs, targets.to(self.device, non_blocking=True), targets_old
                 )
-                hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
-                # Log
-                total_loss += loss.item() * len(targets)
-                total_acc_taw += hits_taw.sum().item()
-                total_acc_tag += hits_tag.sum().item()
-                total_num += len(targets)
+
+                if self.model.is_early_exit():
+                    for i, ic_outputs in enumerate(outputs):
+                        hits_taw, hits_tag = self.calculate_metrics(ic_outputs, targets)
+                        # Log
+                        total_loss += loss[i].item() * len(targets)
+                        total_acc_taw[i] += hits_taw.sum().item()
+                        total_acc_tag[i] += hits_tag.sum().item()
+                        total_num += len(targets)
+                else:
+                    hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
+                    # Log
+                    total_loss += loss.item() * len(targets)
+                    total_acc_taw += hits_taw.sum().item()
+                    total_acc_tag += hits_tag.sum().item()
+                    total_num += len(targets)
+
+            if self.model.is_early_exit():
+                total_num //= len(self.model.ic_layers) + 1
+
         return (
             total_loss / total_num,
             total_acc_taw / total_num,
@@ -408,35 +526,103 @@ class Appr(Inc_Learning_Appr):
 
     def criterion(self, t, outputs, targets, targets_old):
         """Returns the loss value"""
+        if self.model.is_early_exit():
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
+            )
+            losses = []
 
-        # Knowledge distillation loss for all previous tasks
-        loss_dist = 0
-        if t > 0:
-            loss_dist += self.cross_entropy(
-                torch.cat(outputs[:t], dim=1),
-                torch.cat(targets_old[:t], dim=1),
-                exp=1.0 / self.T,
-            )
-        # trade-off - the lambda from the paper if lamb=-1
-        if self.lamb == -1:
-            lamb = (
-                self.model.task_cls[:t].sum().float() / self.model.task_cls.sum()
-            ).to(self.device, non_blocking=True)
-            return (1.0 - lamb) * torch.nn.functional.cross_entropy(
-                torch.cat(outputs, dim=1), targets
-            ) + lamb * loss_dist
+            for ic_idx in range(len(outputs)):
+                loss_dist = 0
+                if t > 0:
+                    loss_dist += self.cross_entropy(
+                        torch.cat(outputs[ic_idx][:t], dim=1),
+                        torch.cat(targets_old[ic_idx][:t], dim=1),
+                        exp=1.0 / self.T,
+                    )
+                # trade-off - the lambda from the paper if lamb=-1
+                if self.lamb == -1:
+                    lamb = (
+                        self.model.task_cls[:t].sum().float()
+                        / self.model.task_cls.sum()
+                    ).to(self.device, non_blocking=True)
+                    loss = (1.0 - lamb) * torch.nn.functional.cross_entropy(
+                        torch.cat(outputs[ic_idx], dim=1), targets
+                    ) + lamb * loss_dist
+                else:
+                    loss = (
+                        torch.nn.functional.cross_entropy(
+                            torch.cat(outputs[ic_idx], dim=1), targets
+                        )
+                        + self.lamb * loss_dist
+                    )
+                losses.append(loss * ic_weights[ic_idx])
+            return losses
+
         else:
-            return (
-                torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
-                + self.lamb * loss_dist
-            )
+            # Knowledge distillation loss for all previous tasks
+            loss_dist = 0
+            if t > 0:
+                loss_dist += self.cross_entropy(
+                    torch.cat(outputs[:t], dim=1),
+                    torch.cat(targets_old[:t], dim=1),
+                    exp=1.0 / self.T,
+                )
+            # trade-off - the lambda from the paper if lamb=-1
+            if self.lamb == -1:
+                lamb = (
+                    self.model.task_cls[:t].sum().float() / self.model.task_cls.sum()
+                ).to(self.device, non_blocking=True)
+                return (1.0 - lamb) * torch.nn.functional.cross_entropy(
+                    torch.cat(outputs, dim=1), targets
+                ) + lamb * loss_dist
+            else:
+                return (
+                    torch.nn.functional.cross_entropy(
+                        torch.cat(outputs, dim=1), targets
+                    )
+                    + self.lamb * loss_dist
+                )
+
+    def ee_net(self, exit_layer: Optional[int] = None) -> torch.nn.Module:
+        # early exit network with all CL logic implemented for inference, for profiling
+        tmp_model = deepcopy(self.model)
+        tmp_model.set_exit_layer(exit_layer)
+        bic_model = BiCModelWrapper(tmp_model, self.bias_layers)
+        return bic_model
+
+
+class BiCModelWrapper(torch.nn.Module):
+    def __init__(self, model, bias_layers):
+        super().__init__()
+        self.model = model
+        self.bias_layers = bias_layers
+
+    def forward(self, x):
+        outputs = self.model(x)
+        if self.model.exit_layer_idx == -1:
+            # This is the case when model does not use early exits
+            bic_outputs = []
+            final_bic_layers = self.bias_layers[-1]
+            for output, bias_layer in zip(outputs, final_bic_layers):
+                bic_outputs.append(bias_layer(output))
+            return bic_outputs
+        else:
+            # This is the case when model uses early exits sequentially
+            bic_outputs = []
+            for ic_idx, ic_output in enumerate(outputs):
+                ic_bic_outputs = []
+                for output, bias_layer in zip(ic_output, self.bias_layers[ic_idx]):
+                    ic_bic_outputs.append(bias_layer(output))
+                bic_outputs.append(ic_bic_outputs)
+            return bic_outputs
 
 
 class BiasLayer(torch.nn.Module):
     """Bias layers with alpha and beta parameters"""
 
     def __init__(self):
-        super(BiasLayer, self).__init__(num_classes)
+        super(BiasLayer, self).__init__()
         # Initialize alpha and beta with requires_grad=False and only set to True during Stage 2
         self.alpha = torch.nn.Parameter(torch.ones(1, requires_grad=False))
         self.beta = torch.nn.Parameter(torch.zeros(1, requires_grad=False))

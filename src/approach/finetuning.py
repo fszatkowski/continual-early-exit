@@ -11,26 +11,26 @@ class Appr(Inc_Learning_Appr):
     """Class implementing the finetuning baseline"""
 
     def __init__(
-            self,
-            model,
-            device,
-            nepochs=100,
-            lr=0.05,
-            lr_min=1e-4,
-            lr_factor=3,
-            lr_patience=5,
-            clipgrad=10000,
-            momentum=0,
-            wd=0,
-            multi_softmax=False,
-            fix_bn=False,
-            eval_on_train=False,
-            select_best_model_by_val_loss=True,
-            logger=None,
-            exemplars_dataset=None,
-            scheduler_milestones=None,
-            all_outputs=False,
-            no_learning=False,
+        self,
+        model,
+        device,
+        nepochs=100,
+        lr=0.05,
+        lr_min=1e-4,
+        lr_factor=3,
+        lr_patience=5,
+        clipgrad=10000,
+        momentum=0,
+        wd=0,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        all_outputs=False,
+        no_learning=False,
     ):
         super(Appr, self).__init__(
             model,
@@ -73,7 +73,7 @@ class Appr(Inc_Learning_Appr):
             action="store_true",
             required=False,
             help="Do not backpropagate gradients after second task - only do batch norm update "
-                 "(default=%(default)s)",
+            "(default=%(default)s)",
         )
         return parser.parse_known_args(args)
 
@@ -83,7 +83,11 @@ class Appr(Inc_Learning_Appr):
             # No exemplars case
             base_params = list(self.model.model.parameters())
             if self.model.is_early_exit():
-                head_params = [p for ic_heads in self.model.heads for p in ic_heads[-1].parameters()]
+                head_params = [
+                    p
+                    for ic_heads in self.model.heads
+                    for p in ic_heads[-1].parameters()
+                ]
             else:
                 head_params = list(self.model.heads[-1].parameters())
             params = base_params + head_params

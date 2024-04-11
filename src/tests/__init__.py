@@ -33,6 +33,8 @@ def run_main(args_line, result_dir="results_test", clean_run=False):
         gpu_idx = worker_id % torch.cuda.device_count()
         args_line += " --gpu {}".format(gpu_idx)
 
+    args_line += " --allow-no-gpu"
+
     print("ARGS:", args_line)
     return main(args_line.split(" "))
 

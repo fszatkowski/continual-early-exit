@@ -36,6 +36,12 @@ def main(argv=None):
     # miscellaneous args
     parser.add_argument("--gpu", type=int, default=0, help="GPU (default=%(default)s)")
     parser.add_argument(
+        "--allow-no-gpu",
+        action="store_true",
+        default=False,
+        help="If set, will not raise an error on no CUDA available (default=%(default)s)",
+    )
+    parser.add_argument(
         "--results-path",
         type=str,
         default="../results",
@@ -384,7 +390,8 @@ def main(argv=None):
     else:
         print("WARNING: [CUDA unavailable] Using CPU instead!")
         device = "cpu"
-        raise EnvironmentError("No GPU available")
+        if not args.allow_no_gpu:
+            raise EnvironmentError("No GPU available")
 
     # In case the dataset is too large
     torch.multiprocessing.set_sharing_strategy("file_system")
