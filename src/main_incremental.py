@@ -860,7 +860,7 @@ def main(argv=None):
             }
         avg_results = combine_ee_eval_results(results)
         results["avg"] = avg_results
-        results_path = Path(logger.exp_path) / "results" / "ee_eval.json"
+        results_path = Path(logger.exp_path) / "results" / "ee_eval.npy"
         np.save(results_path, results)
         plot_path = Path(logger.exp_path) / "results" / "ee_eval.png"
         visualize_ee_results(results["avg"], plot_path)

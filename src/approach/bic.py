@@ -67,7 +67,7 @@ class Appr(Inc_Learning_Appr):
         self.model_old = None
         self.T = T
         self.lamb = lamb
-        self.bias_layers = []
+        self.bias_layers = nn.ModuleList([])
 
         self.x_valid_exemplars = []
         self.y_valid_exemplars = []
@@ -140,6 +140,8 @@ class Appr(Inc_Learning_Appr):
         Some parts could go into self.pre_train_process() or self.post_train_process(), but we leave it for readability
         """
         # add a bias layer for the new classes
+
+
         self.bias_layers.append(BiasLayer().to(self.device, non_blocking=True))
 
         # STAGE 0: EXEMPLAR MANAGEMENT -- select subset of validation to use in Stage 2 -- val_old, val_new (Fig.2)
@@ -434,7 +436,7 @@ class BiasLayer(torch.nn.Module):
     """Bias layers with alpha and beta parameters"""
 
     def __init__(self):
-        super(BiasLayer, self).__init__()
+        super(BiasLayer, self).__init__(num_classes)
         # Initialize alpha and beta with requires_grad=False and only set to True during Stage 2
         self.alpha = torch.nn.Parameter(torch.ones(1, requires_grad=False))
         self.beta = torch.nn.Parameter(torch.zeros(1, requires_grad=False))
