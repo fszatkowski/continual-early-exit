@@ -309,9 +309,10 @@ class Appr(Inc_Learning_Appr):
                     # Forward current model
                     with torch.no_grad():
                         outputs = self.model(inputs)
-                        old_cls_outs = self.bias_forward([o[:t] for o in outputs])
 
                     if self.model.is_early_exit():
+                        with torch.no_grad():
+                            old_cls_outs = self.bias_forward([o[:t] for o in outputs])
                         new_cls_outs = [
                             self.bias_layers[ic_idx][t](outputs[ic_idx][t])
                             for ic_idx in range(len(outputs))
@@ -346,6 +347,8 @@ class Appr(Inc_Learning_Appr):
                             )
                             loss += ic_loss
                     else:
+                        with torch.no_grad():
+                            old_cls_outs = self.bias_forward(outputs[:t])
                         new_cls_outs = self.bias_layers[t](outputs[t])
                         pred_all_classes = torch.cat(
                             [torch.cat(old_cls_outs, dim=1), new_cls_outs], dim=1
@@ -602,11 +605,11 @@ class BiCModelWrapper(torch.nn.Module):
         outputs = self.model(x)
         if self.model.exit_layer_idx == -1:
             # This is the case when model does not use early exits
-            bic_outputs = []
             final_bic_layers = self.bias_layers[-1]
-            for output, bias_layer in zip(outputs, final_bic_layers):
-                bic_outputs.append(bias_layer(output))
-            return bic_outputs
+            return [
+                bias_layer(output)
+                for bias_layer, output in zip(final_bic_layers, outputs)
+            ]
         else:
             # This is the case when model uses early exits sequentially
             bic_outputs = []

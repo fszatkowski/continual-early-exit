@@ -305,174 +305,186 @@ class Inc_Learning_Appr:
     ):
         """Evaluate early exit properties of the network"""
         """ Evaluate per-IC cost of the inference """
-        if exit_costs is None:
-            logging.info(f"Profiling FLOPs per-layer...")
-            samples, _ = next(iter(deepcopy(dataloader)))
-            sample = samples[:1].to(self.device)
-            exit_costs = []
-            for exit_idx in range(len(self.model.ic_layers) + 1):
-                net_for_profiling = self.ee_net(exit_idx)
+        self.model.eval()
+        with torch.no_grad():
+            if exit_costs is None:
+                logging.info(f"Profiling FLOPs per-layer...")
+                samples, _ = next(iter(deepcopy(dataloader)))
+                sample = samples[:1].to(self.device)
+                exit_costs = []
+                for exit_idx in range(len(self.model.ic_layers) + 1):
+                    net_for_profiling = self.ee_net(exit_idx)
+                    flops, params = analyze_flops(net_for_profiling, sample)
+                    exit_costs.append(flops)
+                exit_costs = np.array(exit_costs)
+
+                net_for_profiling = self.ee_net(-1)
                 flops, params = analyze_flops(net_for_profiling, sample)
-                exit_costs.append(flops)
-            exit_costs = np.array(exit_costs)
+                baseline_cost = flops
 
-            net_for_profiling = self.ee_net(-1)
-            flops, params = analyze_flops(net_for_profiling, sample)
-            baseline_cost = flops
+            n_cls = len(self.model.ic_layers) + 1
 
-        n_cls = len(self.model.ic_layers) + 1
+            inference_network = self.ee_net()
+            thresholds = (
+                thresholds.unsqueeze(1).unsqueeze(1).to(self.device)
+            )  # [th, batch size, ic idx]
+            per_ic_hits = {
+                "taw": np.zeros(
+                    n_cls,
+                ),
+                "tag": np.zeros(
+                    n_cls,
+                ),
+            }
+            per_th_hits = {
+                "taw": np.zeros((len(thresholds),)),
+                "tag": np.zeros((len(thresholds),)),
+            }
+            per_th_exits = {
+                "taw": np.zeros((len(thresholds), n_cls)),
+                "tag": np.zeros((len(thresholds), n_cls)),
+            }
 
-        inference_network = self.ee_net()
-        thresholds = (
-            thresholds.unsqueeze(1).unsqueeze(1).to(self.device)
-        )  # [th, batch size, ic idx]
-        per_ic_hits = {
-            "taw": np.zeros(
-                n_cls,
-            ),
-            "tag": np.zeros(
-                n_cls,
-            ),
-        }
-        per_th_hits = {
-            "taw": np.zeros((len(thresholds),)),
-            "tag": np.zeros((len(thresholds),)),
-        }
-        per_th_exits = {
-            "taw": np.zeros((len(thresholds), n_cls)),
-            "tag": np.zeros((len(thresholds), n_cls)),
-        }
+            total_cnt = 0
+            for images, targets in dataloader:
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
+                outputs = inference_network(images)
 
-        total_cnt = 0
-        for images, targets in dataloader:
-            images = images.to(self.device, non_blocking=True)
-            targets = targets.to(self.device, non_blocking=True)
-            outputs = inference_network(images)
+                merged_outputs_taw = torch.stack(
+                    [o[t] for o in outputs], dim=1
+                )  # [batch size, ic idx, num classes]
+                merged_outputs_tag = torch.stack(
+                    [
+                        torch.cat([torch.cat(ic_outputs, dim=1)], dim=-1)
+                        for ic_outputs in outputs
+                    ],
+                    dim=1,
+                )  # [batch size, ic idx, num classes]
 
-            merged_outputs_taw = torch.stack(
-                [o[t] for o in outputs], dim=1
-            )  # [batch size, ic idx, num classes]
-            merged_outputs_tag = torch.stack(
-                [
-                    torch.cat([torch.cat(ic_outputs, dim=1)], dim=-1)
-                    for ic_outputs in outputs
-                ],
-                dim=1,
-            )  # [batch size, ic idx, num classes]
+                preds_taw_static = (
+                    merged_outputs_taw.argmax(dim=-1) + self.model.task_offset[t]
+                )  # [batch size, ic idx]
+                preds_tag_static = merged_outputs_tag.argmax(
+                    dim=-1
+                )  # [batch size, ic idx]
 
-            preds_taw_static = (
-                merged_outputs_taw.argmax(dim=-1) + self.model.task_offset[t]
-            )  # [batch size, ic idx]
-            preds_tag_static = merged_outputs_tag.argmax(dim=-1)  # [batch size, ic idx]
+                hits_taw_static = (preds_taw_static == targets.unsqueeze(-1)).sum(
+                    dim=0
+                )  # [ic idx]
+                hits_tag_static = (preds_tag_static == targets.unsqueeze(-1)).sum(
+                    dim=0
+                )  # [ic idx]
 
-            hits_taw_static = (preds_taw_static == targets.unsqueeze(-1)).sum(
-                dim=0
-            )  # [ic idx]
-            hits_tag_static = (preds_tag_static == targets.unsqueeze(-1)).sum(
-                dim=0
-            )  # [ic idx]
+                per_ic_hits["taw"] += hits_taw_static.cpu().numpy()
+                per_ic_hits["tag"] += hits_tag_static.cpu().numpy()
 
-            per_ic_hits["taw"] += hits_taw_static.cpu().numpy()
-            per_ic_hits["tag"] += hits_tag_static.cpu().numpy()
+                merged_probs_taw = merged_outputs_taw.softmax(dim=-1).unsqueeze(
+                    0
+                )  # [th, batch size, ic idx, num classes]
+                merged_probs_tag = merged_outputs_tag.softmax(dim=-1).unsqueeze(
+                    0
+                )  # [th, batch size, ic idx, num classes]
 
-            merged_probs_taw = merged_outputs_taw.softmax(dim=-1).unsqueeze(
-                0
-            )  # [th, batch size, ic idx, num classes]
-            merged_probs_tag = merged_outputs_tag.softmax(dim=-1).unsqueeze(
-                0
-            )  # [th, batch size, ic idx, num classes]
+                merged_max_conf_taw = merged_probs_taw.max(dim=-1)[0]
+                merged_max_conf_tag = merged_probs_tag.max(dim=-1)[0]
 
-            merged_max_conf_taw = merged_probs_taw.max(dim=-1)[0]
-            merged_max_conf_tag = merged_probs_tag.max(dim=-1)[0]
+                th_mask_taw = merged_max_conf_taw >= thresholds
+                th_mask_tag = merged_max_conf_tag >= thresholds
 
-            th_mask_taw = merged_max_conf_taw >= thresholds
-            th_mask_tag = merged_max_conf_tag >= thresholds
+                th_mask_taw = th_mask_taw.float()
+                th_mask_tag = th_mask_tag.float()
 
-            th_mask_taw = th_mask_taw.float()
-            th_mask_tag = th_mask_tag.float()
+                # Compute mask determining if early exit happened
+                exit_mask_taw = th_mask_taw.sum(dim=-1) > 0
+                exit_mask_tag = th_mask_tag.sum(dim=-1) > 0
 
-            # Compute mask determining if early exit happened
-            exit_mask_taw = th_mask_taw.sum(dim=-1) > 0
-            exit_mask_tag = th_mask_tag.sum(dim=-1) > 0
+                # Compute exit indices
+                exit_ic_idx_taw = th_mask_taw.argmax(dim=-1)
+                exit_ic_idx_tag = th_mask_tag.argmax(dim=-1)
 
-            # Compute exit indices
-            exit_ic_idx_taw = th_mask_taw.argmax(dim=-1)
-            exit_ic_idx_tag = th_mask_tag.argmax(dim=-1)
+                # Choose predictions for samples which didn't exit
+                if no_exit_strategy == "max_conf":
+                    no_exit_ic_idx_taw = merged_max_conf_taw.argmax(dim=2)
+                    no_exit_ic_idx_tag = merged_max_conf_tag.argmax(dim=2)
+                elif no_exit_strategy == "last":
+                    no_exit_ic_idx_taw = n_cls - 1
+                    no_exit_ic_idx_tag = n_cls - 1
+                else:
+                    raise NotImplementedError()
 
-            # Choose predictions for samples which didn't exit
-            if no_exit_strategy == "max_conf":
-                no_exit_ic_idx_taw = merged_max_conf_taw.argmax(dim=2)
-                no_exit_ic_idx_tag = merged_max_conf_tag.argmax(dim=2)
-            elif no_exit_strategy == "last":
-                no_exit_ic_idx_taw = n_cls - 1
-                no_exit_ic_idx_tag = n_cls - 1
-            else:
-                raise NotImplementedError()
+                # Compute real exit layer for each sample (some samples might not exit and chose previous layer, but their cost is full net)
+                real_exit_idx_taw = torch.where(
+                    exit_mask_taw, exit_ic_idx_taw, n_cls - 1
+                )
+                real_exit_idx_tag = torch.where(
+                    exit_mask_tag, exit_ic_idx_tag, n_cls - 1
+                )
 
-            # Compute real exit layer for each sample (some samples might not exit and chose previous layer, but their cost is full net)
-            real_exit_idx_taw = torch.where(exit_mask_taw, exit_ic_idx_taw, n_cls - 1)
-            real_exit_idx_tag = torch.where(exit_mask_tag, exit_ic_idx_tag, n_cls - 1)
+                # Compute per threshold predictions
+                pred_idx_taw = torch.where(
+                    exit_mask_taw, exit_ic_idx_taw, no_exit_ic_idx_taw
+                )
+                pred_idx_tag = torch.where(
+                    exit_mask_tag, exit_ic_idx_tag, no_exit_ic_idx_tag
+                )
 
-            # Compute per threshold predictions
-            pred_idx_taw = torch.where(
-                exit_mask_taw, exit_ic_idx_taw, no_exit_ic_idx_taw
+                preds_mask_taw = torch.nn.functional.one_hot(
+                    pred_idx_taw, num_classes=n_cls
+                )
+                preds_mask_tag = torch.nn.functional.one_hot(
+                    pred_idx_tag, num_classes=n_cls
+                )
+
+                preds_taw_dynamic = (
+                    preds_taw_static.unsqueeze(0) * preds_mask_taw
+                ).sum(dim=-1) + self.model.task_offset[t]
+                preds_tag_dynamic = (
+                    preds_tag_static.unsqueeze(0) * preds_mask_tag
+                ).sum(dim=-1)
+
+                hits_taw_dynamic = (preds_taw_dynamic == targets.unsqueeze(0)).sum(
+                    dim=1
+                )
+                hits_tag_dynamic = (preds_tag_dynamic == targets.unsqueeze(0)).sum(
+                    dim=1
+                )
+
+                per_th_hits["taw"] += hits_taw_dynamic.cpu().numpy()
+                per_th_hits["tag"] += hits_tag_dynamic.cpu().numpy()
+
+                per_th_exits["taw"] += (
+                    torch.nn.functional.one_hot(real_exit_idx_taw, num_classes=n_cls)
+                    .sum(dim=1)
+                    .cpu()
+                    .numpy()
+                )
+                per_th_exits["tag"] += (
+                    torch.nn.functional.one_hot(real_exit_idx_tag, num_classes=n_cls)
+                    .sum(dim=1)
+                    .cpu()
+                    .numpy()
+                )
+
+                total_cnt += len(targets)
+
+            per_ic_accuracy = {
+                acc_type: hits / total_cnt for acc_type, hits in per_ic_hits.items()
+            }
+
+            per_th_accuracy = {
+                acc_type: hits / total_cnt for acc_type, hits in per_th_hits.items()
+            }
+            per_th_exit_cnt = {
+                acc_type: cnt / total_cnt for acc_type, cnt in per_th_exits.items()
+            }
+            return (
+                exit_costs,
+                baseline_cost,
+                per_ic_accuracy,
+                per_th_accuracy,
+                per_th_exit_cnt,
             )
-            pred_idx_tag = torch.where(
-                exit_mask_tag, exit_ic_idx_tag, no_exit_ic_idx_tag
-            )
-
-            preds_mask_taw = torch.nn.functional.one_hot(
-                pred_idx_taw, num_classes=n_cls
-            )
-            preds_mask_tag = torch.nn.functional.one_hot(
-                pred_idx_tag, num_classes=n_cls
-            )
-
-            preds_taw_dynamic = (preds_taw_static.unsqueeze(0) * preds_mask_taw).sum(
-                dim=-1
-            ) + self.model.task_offset[t]
-            preds_tag_dynamic = (preds_tag_static.unsqueeze(0) * preds_mask_tag).sum(
-                dim=-1
-            )
-
-            hits_taw_dynamic = (preds_taw_dynamic == targets.unsqueeze(0)).sum(dim=1)
-            hits_tag_dynamic = (preds_tag_dynamic == targets.unsqueeze(0)).sum(dim=1)
-
-            per_th_hits["taw"] += hits_taw_dynamic.cpu().numpy()
-            per_th_hits["tag"] += hits_tag_dynamic.cpu().numpy()
-
-            per_th_exits["taw"] += (
-                torch.nn.functional.one_hot(real_exit_idx_taw, num_classes=n_cls)
-                .sum(dim=1)
-                .cpu()
-                .numpy()
-            )
-            per_th_exits["tag"] += (
-                torch.nn.functional.one_hot(real_exit_idx_tag, num_classes=n_cls)
-                .sum(dim=1)
-                .cpu()
-                .numpy()
-            )
-
-            total_cnt += len(targets)
-
-        per_ic_accuracy = {
-            acc_type: hits / total_cnt for acc_type, hits in per_ic_hits.items()
-        }
-
-        per_th_accuracy = {
-            acc_type: hits / total_cnt for acc_type, hits in per_th_hits.items()
-        }
-        per_th_exit_cnt = {
-            acc_type: cnt / total_cnt for acc_type, cnt in per_th_exits.items()
-        }
-        return (
-            exit_costs,
-            baseline_cost,
-            per_ic_accuracy,
-            per_th_accuracy,
-            per_th_exit_cnt,
-        )
 
     def calculate_metrics(self, outputs, targets):
         """Contains the main Task-Aware and Task-Agnostic metrics"""

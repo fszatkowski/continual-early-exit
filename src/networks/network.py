@@ -3,7 +3,7 @@ from copy import deepcopy
 import torch
 from torch import nn
 
-from networks.ic_utils import create_ic, get_sdn_weights
+from networks.ic_utils import create_ic, get_alt_sdn_weights, get_sdn_weights
 
 
 class LLL_Net(nn.Module):
@@ -133,10 +133,10 @@ class LLL_Net(nn.Module):
 
             assert len(features) == len(self.ic_layers) + 1
 
-            for features, heads in zip(features, self.heads):
+            for ic_features, heads in zip(features, self.heads):
                 head_outputs = []
                 for head in heads:
-                    head_outputs.append(head(features))
+                    head_outputs.append(head(ic_features))
                 outputs.append(head_outputs)
 
             if self.exit_layer_idx == -1:
@@ -216,6 +216,12 @@ class LLL_Net(nn.Module):
     def get_ic_weights(self, current_epoch, max_epochs):
         if self.ic_weighting == "sdn":
             return get_sdn_weights(current_epoch, max_epochs)
+        if self.ic_weighting == "sdn_normalized":
+            sdn_weights = get_sdn_weights(current_epoch, max_epochs)
+            norm = sum(sdn_weights)
+            return [w / norm for w in sdn_weights]
+        if self.ic_weighting == "alt_sdn":
+            return get_alt_sdn_weights(current_epoch, max_epochs)
         elif self.ic_weighting == "uniform":
             return [1.0] * (len(self.ic_layers) + 1)
         else:
