@@ -179,6 +179,8 @@ class Appr(Inc_Learning_Appr):
             # Forward current model
             outputs = self.model(data)
             loss = self.criterion(t, outputs, target, target_r, targets_old)
+            if self.model.is_early_exit():
+                loss = sum(loss)
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -188,30 +190,77 @@ class Appr(Inc_Learning_Appr):
             self.scheduler.step()
 
     def criterion(self, t, outputs, target, target_r=None, outputs_old=None):
-        loss_KD = 0
         batch_size = len(target)
         replay_size = len(target_r) if target_r is not None else 0
-        loss_CE_curr = self.loss(
-            outputs[t][:batch_size], target - self.model.task_offset[t]
-        )
 
-        if t > 0 and target_r is not None:
-            prev = torch.cat(
-                [o[batch_size : batch_size + replay_size] for o in outputs[:t]], dim=1
+        if self.model.is_early_exit():
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
             )
-            loss_CE_prev = self.loss(prev, target_r)
-            loss_CE = (loss_CE_curr + loss_CE_prev) / (batch_size + replay_size)
+            losses_kd = []
+            losses_ce = []
+            losses_total = []
 
-            # loss_KD
-            loss_KD = torch.zeros(t).to(self.device, non_blocking=True)
-            for _t in range(t):
-                soft_target = F.softmax(outputs_old[_t] / self.T, dim=1)
-                output_log = F.log_softmax(outputs[_t] / self.T, dim=1)
-                loss_KD[_t] = F.kl_div(
-                    output_log, soft_target, reduction="batchmean"
-                ) * (self.T**2)
-            loss_KD = loss_KD.sum()
+            for ic_idx in range(len(outputs)):
+                outputs_ic = outputs[ic_idx]
+
+                ic_loss_KD = 0
+                ic_loss_CE_curr = self.loss(
+                    outputs_ic[t][:batch_size], target - self.model.task_offset[t]
+                )
+                if t > 0 and target_r is not None:
+                    outputs_old_ic = outputs_old[ic_idx]
+
+                    ic_prev = torch.cat(
+                        [o[batch_size: batch_size + replay_size] for o in outputs_ic[:t]], dim=1
+                    )
+                    ic_loss_CE_prev = self.loss(ic_prev, target_r)
+                    ic_loss_CE = (ic_loss_CE_curr + ic_loss_CE_prev) / (
+                        batch_size + replay_size
+                    )
+
+                    # KD loss
+                    ic_loss_KD = torch.zeros(t).to(self.device, non_blocking=True)
+                    for _t in range(t):
+                        soft_target = F.softmax(outputs_old_ic[_t] / self.T, dim=1)
+                        output_log = F.log_softmax(outputs_ic[_t] / self.T, dim=1)
+                        ic_loss_KD[_t] = F.kl_div(
+                            output_log, soft_target, reduction="batchmean"
+                        ) * (self.T**2)
+                    ic_loss_KD = ic_loss_KD.sum()
+                else:
+                    ic_loss_CE = ic_loss_CE_curr / batch_size
+
+                ic_loss_CE = ic_loss_CE * ic_weights[ic_idx]
+                ic_loss_KD = ic_loss_KD * ic_weights[ic_idx]
+
+                losses_kd.append(ic_loss_KD)
+                losses_ce.append(ic_loss_CE)
+                losses_total.append(ic_loss_CE + self.lamb * ic_loss_KD)
+            return losses_total
         else:
-            loss_CE = loss_CE_curr / batch_size
+            loss_KD = 0
+            loss_CE_curr = self.loss(
+                outputs[t][:batch_size], target - self.model.task_offset[t]
+            )
 
-        return loss_CE + self.lamb * loss_KD
+            if t > 0 and target_r is not None:
+                prev = torch.cat(
+                    [o[batch_size : batch_size + replay_size] for o in outputs[:t]], dim=1
+                )
+                loss_CE_prev = self.loss(prev, target_r)
+                loss_CE = (loss_CE_curr + loss_CE_prev) / (batch_size + replay_size)
+
+                # loss_KD
+                loss_KD = torch.zeros(t).to(self.device, non_blocking=True)
+                for _t in range(t):
+                    soft_target = F.softmax(outputs_old[_t] / self.T, dim=1)
+                    output_log = F.log_softmax(outputs[_t] / self.T, dim=1)
+                    loss_KD[_t] = F.kl_div(
+                        output_log, soft_target, reduction="batchmean"
+                    ) * (self.T**2)
+                loss_KD = loss_KD.sum()
+            else:
+                loss_CE = loss_CE_curr / batch_size
+
+            return loss_CE + self.lamb * loss_KD
