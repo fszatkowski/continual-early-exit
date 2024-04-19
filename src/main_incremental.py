@@ -46,7 +46,7 @@ def main(argv=None):
         action="store_true",
         default=False,
         help="If set, will force overwrite to the directory; "
-             "otherwise will not start training if the target exp directory already exists (default=%(default)s)",
+        "otherwise will not start training if the target exp directory already exists (default=%(default)s)",
     )
     parser.add_argument(
         "--results-path",
@@ -487,8 +487,10 @@ def main(argv=None):
         tags=args.tags,
     )
     if os.path.exists(logger.exp_path) and not args.overwrite:
-        print(f"The directory {logger.exp_path} already exits. Skipping training.\n"
-              f" Please add '--overwrite' option to force training.")
+        print(
+            f"The directory {logger.exp_path} already exits. Skipping training.\n"
+            f" Please add '--overwrite' option to force training."
+        )
 
     logger.log_args(
         argparse.Namespace(

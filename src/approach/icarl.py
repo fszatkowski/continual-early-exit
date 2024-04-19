@@ -40,6 +40,7 @@ class Appr(Inc_Learning_Appr):
         scheduler_milestones=None,
         lamb=1,
         logit_conversion="inverse",
+        ic_pooling="none",
     ):
         super(Appr, self).__init__(
             model,
@@ -63,6 +64,7 @@ class Appr(Inc_Learning_Appr):
         self.model_old = None
         self.lamb = lamb
         self.nmc_logit_conversion = logit_conversion
+        self.ic_pooling = ic_pooling
 
         # iCaRL is expected to be used with exemplars. If needed to be used without exemplars, overwrite here the
         # `_get_optimizer` function with the one in LwF and update the criterion
@@ -95,8 +97,15 @@ class Appr(Inc_Learning_Appr):
             "--logit-conversion",
             default="inverse",
             type=str,
-            required=False,
+            choices=["inverse", "pdf"],
             help="NMC distance to logits conversion (default=%(default)s)",
+        )
+        parser.add_argument(
+            "--ic-pooling",
+            default="none",
+            type=str,
+            choices=["none", "avg", "max", "combined"],
+            help="Pooling strategy for intermediate features (default=%(default)s)",
         )
         return parser.parse_known_args(args)
 
@@ -152,9 +161,13 @@ class Appr(Inc_Learning_Appr):
                     )
                     # normalize
                     if self.model.is_early_exit():
-                        for i in range(len(feats)):
-                            ic_features = feats[i].view(feats[i].shape[0], -1)
-                            extracted_features[i].append(
+                        for ic_idx in range(len(feats)):
+                            ic_features = feats[ic_idx]
+                            ic_features = pool_nmc_features(
+                                ic_features, ic_idx, len(feats), self.ic_pooling
+                            )
+                            ic_features = ic_features.view(ic_features.shape[0], -1)
+                            extracted_features[ic_idx].append(
                                 ic_features / ic_features.norm(dim=1).view(-1, 1)
                             )
                     else:
@@ -291,6 +304,9 @@ class Appr(Inc_Learning_Appr):
                             )
                         else:
                             ic_means = self.exemplar_means[ic_idx]
+                            ic_feats = pool_nmc_features(
+                                ic_feats, ic_idx, len(outputs), self.ic_pooling
+                            )
                             hits_taw, hits_tag = self.classify(
                                 task=t,
                                 features=ic_feats,
@@ -374,17 +390,42 @@ class Appr(Inc_Learning_Appr):
         tmp_model = deepcopy(self.model)
         tmp_model.set_exit_layer(exit_layer)
         icarl_model = iCaRLModelWrapper(
-            tmp_model, self.exemplar_means, logit_conversion=self.nmc_logit_conversion
+            tmp_model,
+            self.exemplar_means,
+            logit_conversion=self.nmc_logit_conversion,
+            ic_pooling=self.ic_pooling,
         )
         return icarl_model
 
 
+def pool_nmc_features(features, ic_idx, num_cls, pooling="non"):
+    if ic_idx == num_cls - 1 or len(features.shape) != 4:
+        return features
+
+    if pooling == "none":
+        return features
+    elif pooling == "avg":
+        return torch.nn.functional.avg_pool2d(features, kernel_size=2)
+    elif pooling == "max":
+        return torch.nn.functional.max_pool2d(features, kernel_size=2)
+    elif pooling == "combined":
+        return 0.5 * (
+            torch.nn.functional.max_pool2d(features, kernel_size=2)
+            + torch.nn.functional.avg_pool2d(features, kernel_size=2)
+        )
+    else:
+        raise NotImplementedError(f"Pooling {pooling} not implemented")
+
+
 class iCaRLModelWrapper(torch.nn.Module):
-    def __init__(self, model, exemplar_means, logit_conversion="inverse"):
+    def __init__(
+        self, model, exemplar_means, logit_conversion="inverse", ic_pooling="none"
+    ):
         super().__init__()
         self.model = model
         self.exemplar_means = exemplar_means
         self.logit_conversion = logit_conversion
+        self.ic_pooling = ic_pooling
 
     def forward(self, x):
         outputs, features = self.model(x, return_features=True)
@@ -404,6 +445,9 @@ class iCaRLModelWrapper(torch.nn.Module):
             for ic_idx, (ic_outputs, ic_features) in enumerate(zip(outputs, features)):
                 task_sizes = [int(o.shape[-1]) for o in ic_outputs]
                 ic_means = self.exemplar_means[ic_idx]
+                ic_features = pool_nmc_features(
+                    ic_features, ic_idx, len(self.model.ic_layers) + 1, self.ic_pooling
+                )
                 probs = self.classify(ic_features, ic_means)
                 current_task_size = 0
                 nmc_outputs = []

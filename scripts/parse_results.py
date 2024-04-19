@@ -12,6 +12,8 @@ sns.set_style('whitegrid')
 def best_th_acc(costs, accs, cost_th):
     cost_acc = [(c, a) for c, a in zip(costs, accs)]
     cost_acc_below = [(c, a) for c, a in cost_acc if c <= cost_th]
+    if len(cost_acc_below) == 0:
+        return 0
     best_acc = max(cost_acc_below, key=lambda x: x[1])[1]
     return best_acc
 
@@ -37,7 +39,7 @@ def plot_compare(data, output_path):
 
 
 if __name__ == "__main__":
-    root_name = 'results_athena_v2'
+    root_name = 'results'
     output_dir = Path('parsed_results') / 'athena_v2'
     output_dir.mkdir(parents=True, exist_ok=True)
 
