@@ -549,6 +549,7 @@ def main(argv=None):
 
     ### Add test loader for oracle evaluation during teacher finetuning
     appr.tst_loader = tst_loader
+    appr.n_tasks = len(taskcla)
 
     # GridSearch
     if args.gridsearch_tasks > 0:

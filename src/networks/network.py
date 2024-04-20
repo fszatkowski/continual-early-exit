@@ -3,7 +3,12 @@ from copy import deepcopy
 import torch
 from torch import nn
 
-from networks.ic_utils import create_ic, get_alt_sdn_weights, get_sdn_weights
+from networks.ic_utils import (
+    create_ic,
+    get_alt_sdn_weights,
+    get_sdn_weights,
+    register_intermediate_output_hooks,
+)
 
 
 class LLL_Net(nn.Module):
@@ -98,7 +103,7 @@ class LLL_Net(nn.Module):
             final_heads = self.heads
         else:
             final_heads = self.heads[-1]
-        self.task_cls = torch.tensor([head.out_features for head in final_heads])
+        self.task_cls = torch.tensor(list(self.task_cls) + [num_outputs])
         self.task_offset = torch.cat(
             [torch.LongTensor(1).zero_(), self.task_cls.cumsum(0)[:-1]]
         )
@@ -229,30 +234,3 @@ class LLL_Net(nn.Module):
 
     def set_exit_layer(self, layer_idx: int):
         self.exit_layer_idx = layer_idx
-
-
-class RegisterForwardHook:
-    def __init__(self):
-        self.output = None
-
-    def __call__(self, module, input, output):
-        self.output = output
-
-
-def register_intermediate_output_hooks(model, layers):
-    hooks = []
-    modules = [(name, module) for name, module in model.named_modules()]
-    module_names = [n for n, _ in modules]
-    for layer_name in layers:
-        module_found = False
-        for module_name, module in modules:
-            if module_name == layer_name:
-                hook = RegisterForwardHook()
-                module.register_forward_hook(hook)
-                hooks.append(hook)
-                print(f"Attaching IC to the layer {layer_name}...")
-                module_found = True
-                break
-        if not module_found:
-            raise ValueError(f"Could not find module {layer_name} to attach the IC.")
-    return hooks
