@@ -56,25 +56,25 @@ class Appr(Inc_Learning_Appr):
     """
 
     def __init__(
-        self,
-        model,
-        device,
-        nepochs=100,
-        lr=0.05,
-        lr_min=0.0005,
-        lr_factor=3,
-        lr_patience=5,
-        clipgrad=10.0,
-        momentum=0.9,
-        wd=1e-6,
-        multi_softmax=False,
-        fix_bn=False,
-        eval_on_train=False,
-        select_best_model_by_val_loss=True,
-        logger=None,
-        exemplars_dataset=None,
-        scheduler_milestones=None,
-        regularization="cutmix",
+            self,
+            model,
+            device,
+            nepochs=100,
+            lr=0.05,
+            lr_min=0.0005,
+            lr_factor=3,
+            lr_patience=5,
+            clipgrad=10.0,
+            momentum=0.9,
+            wd=1e-6,
+            multi_softmax=False,
+            fix_bn=False,
+            eval_on_train=False,
+            select_best_model_by_val_loss=True,
+            logger=None,
+            exemplars_dataset=None,
+            scheduler_milestones=None,
+            regularization="cutmix",
     ):
         super(Appr, self).__init__(
             model,
@@ -99,8 +99,8 @@ class Appr(Inc_Learning_Appr):
         self.init_model = None
 
         have_exemplars = (
-            self.exemplars_dataset.max_num_exemplars
-            + self.exemplars_dataset.max_num_exemplars_per_class
+                self.exemplars_dataset.max_num_exemplars
+                + self.exemplars_dataset.max_num_exemplars_per_class
         )
         assert have_exemplars > 0, "Error: GDumb needs exemplars."
 
@@ -125,12 +125,10 @@ class Appr(Inc_Learning_Appr):
         # 1. GDumb resets the network before learning a new task, relying only on the exemplars stored so far
         if t == 0:
             # Keep the randomly initialized model from time step 0
-            self.init_model = deepcopy(self.model)
+            self.init_model = self.model.state_dict()
         else:
             # Reinitialize the model (backbone) for very task from time step 1
-            self.model.model = deepcopy(self.init_model.model)
-            for layer in self.model.heads.children():
-                layer.reset_parameters()
+            self.model.load_state_dict(self.init_model, strict=False)
 
         # EXEMPLAR MANAGEMENT -- select training subset from current task and exemplar memory
         aux_loader = torch.utils.data.DataLoader(
@@ -166,8 +164,8 @@ class Appr(Inc_Learning_Appr):
             if len(self.exemplars_dataset) > 0:
                 # 2. Balanced batches
                 exemplar_indices = torch.randperm(len(self.exemplars_dataset))[
-                    : trn_loader.batch_size
-                ]
+                                   : trn_loader.batch_size
+                                   ]
                 images_exemplars, targets_exemplars = default_collate(
                     [self.exemplars_dataset[i] for i in exemplar_indices]
                 )
@@ -176,34 +174,64 @@ class Appr(Inc_Learning_Appr):
 
             # 3. Apply cutmix as regularization
             do_cutmix = (
-                self.regularization == "cutmix" and np.random.rand(1) < 0.5
+                    self.regularization == "cutmix" and np.random.rand(1) < 0.5
             )  # cutmix_prob (Sec.4)
+
+            if t == 1:
+                print("???")
+
             if do_cutmix:
                 images, targets_a, targets_b, lamb = cutmix_data(
                     x=images, y=targets, alpha=1.0
                 )  # cutmix_alpha (Sec.4)
                 # Forward current model
                 outputs = self.model(images.to(self.device, non_blocking=True))
-                loss = lamb * self.criterion(
-                    t, outputs, targets_a.to(self.device, non_blocking=True)
-                )
-                loss += (1.0 - lamb) * self.criterion(
-                    t, outputs, targets_b.to(self.device, non_blocking=True)
-                )
+
+                if self.model.is_early_exit():
+                    losses_a = self.criterion(
+                        t, outputs, targets_a.to(self.device, non_blocking=True)
+                    )
+                    losses_b = self.criterion(
+                        t, outputs, targets_b.to(self.device, non_blocking=True)
+                    )
+                    losses = [
+                        lamb * l_a + (1.0 - lamb) * l_b for l_a, l_b in zip(losses_a, losses_b)
+                    ]
+                    loss = sum(losses)
+                else:
+                    loss = lamb * self.criterion(
+                        t, outputs, targets_a.to(self.device, non_blocking=True)
+                    )
+                    loss += (1.0 - lamb) * self.criterion(
+                        t, outputs, targets_b.to(self.device, non_blocking=True)
+                    )
             else:
                 outputs = self.model(images.to(self.device, non_blocking=True))
                 loss = self.criterion(
                     t, outputs, targets.to(self.device, non_blocking=True)
                 )
+                if self.model.is_early_exit():
+                    loss = sum(loss)
 
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clipgrad)
             self.optimizer.step()
+
         if self.scheduler is not None:
             self.scheduler.step()
 
     def criterion(self, t, outputs, targets):
         """Returns the loss value"""
-        return torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
+        if self.model.is_early_exit():
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
+            )
+            ic_losses = []
+            for ic_weight, ic_output in zip(ic_weights, outputs):
+                ic_loss = torch.nn.functional.cross_entropy(torch.cat(ic_output, dim=1), targets)
+                ic_losses.append(ic_weight * ic_loss)
+            return ic_losses
+        else:
+            return torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
