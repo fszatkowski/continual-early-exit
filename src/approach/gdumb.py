@@ -1,5 +1,4 @@
 from argparse import ArgumentParser
-from copy import deepcopy
 
 import numpy as np
 import torch
@@ -56,25 +55,25 @@ class Appr(Inc_Learning_Appr):
     """
 
     def __init__(
-            self,
-            model,
-            device,
-            nepochs=100,
-            lr=0.05,
-            lr_min=0.0005,
-            lr_factor=3,
-            lr_patience=5,
-            clipgrad=10.0,
-            momentum=0.9,
-            wd=1e-6,
-            multi_softmax=False,
-            fix_bn=False,
-            eval_on_train=False,
-            select_best_model_by_val_loss=True,
-            logger=None,
-            exemplars_dataset=None,
-            scheduler_milestones=None,
-            regularization="cutmix",
+        self,
+        model,
+        device,
+        nepochs=100,
+        lr=0.05,
+        lr_min=0.0005,
+        lr_factor=3,
+        lr_patience=5,
+        clipgrad=10.0,
+        momentum=0.9,
+        wd=1e-6,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        regularization="cutmix",
     ):
         super(Appr, self).__init__(
             model,
@@ -99,8 +98,8 @@ class Appr(Inc_Learning_Appr):
         self.init_model = None
 
         have_exemplars = (
-                self.exemplars_dataset.max_num_exemplars
-                + self.exemplars_dataset.max_num_exemplars_per_class
+            self.exemplars_dataset.max_num_exemplars
+            + self.exemplars_dataset.max_num_exemplars_per_class
         )
         assert have_exemplars > 0, "Error: GDumb needs exemplars."
 
@@ -164,8 +163,8 @@ class Appr(Inc_Learning_Appr):
             if len(self.exemplars_dataset) > 0:
                 # 2. Balanced batches
                 exemplar_indices = torch.randperm(len(self.exemplars_dataset))[
-                                   : trn_loader.batch_size
-                                   ]
+                    : trn_loader.batch_size
+                ]
                 images_exemplars, targets_exemplars = default_collate(
                     [self.exemplars_dataset[i] for i in exemplar_indices]
                 )
@@ -174,7 +173,7 @@ class Appr(Inc_Learning_Appr):
 
             # 3. Apply cutmix as regularization
             do_cutmix = (
-                    self.regularization == "cutmix" and np.random.rand(1) < 0.5
+                self.regularization == "cutmix" and np.random.rand(1) < 0.5
             )  # cutmix_prob (Sec.4)
 
             if t == 1:
@@ -195,7 +194,8 @@ class Appr(Inc_Learning_Appr):
                         t, outputs, targets_b.to(self.device, non_blocking=True)
                     )
                     losses = [
-                        lamb * l_a + (1.0 - lamb) * l_b for l_a, l_b in zip(losses_a, losses_b)
+                        lamb * l_a + (1.0 - lamb) * l_b
+                        for l_a, l_b in zip(losses_a, losses_b)
                     ]
                     loss = sum(losses)
                 else:
@@ -230,7 +230,9 @@ class Appr(Inc_Learning_Appr):
             )
             ic_losses = []
             for ic_weight, ic_output in zip(ic_weights, outputs):
-                ic_loss = torch.nn.functional.cross_entropy(torch.cat(ic_output, dim=1), targets)
+                ic_loss = torch.nn.functional.cross_entropy(
+                    torch.cat(ic_output, dim=1), targets
+                )
                 ic_losses.append(ic_weight * ic_loss)
             return ic_losses
         else:

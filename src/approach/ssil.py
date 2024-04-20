@@ -212,7 +212,11 @@ class Appr(Inc_Learning_Appr):
                     outputs_old_ic = outputs_old[ic_idx]
 
                     ic_prev = torch.cat(
-                        [o[batch_size: batch_size + replay_size] for o in outputs_ic[:t]], dim=1
+                        [
+                            o[batch_size : batch_size + replay_size]
+                            for o in outputs_ic[:t]
+                        ],
+                        dim=1,
                     )
                     ic_loss_CE_prev = self.loss(ic_prev, target_r)
                     ic_loss_CE = (ic_loss_CE_curr + ic_loss_CE_prev) / (
@@ -246,7 +250,8 @@ class Appr(Inc_Learning_Appr):
 
             if t > 0 and target_r is not None:
                 prev = torch.cat(
-                    [o[batch_size : batch_size + replay_size] for o in outputs[:t]], dim=1
+                    [o[batch_size : batch_size + replay_size] for o in outputs[:t]],
+                    dim=1,
                 )
                 loss_CE_prev = self.loss(prev, target_r)
                 loss_CE = (loss_CE_curr + loss_CE_prev) / (batch_size + replay_size)

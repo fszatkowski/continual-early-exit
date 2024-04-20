@@ -7,7 +7,7 @@ FAST_LOCAL_TEST_ARGS = (
     " --network LeNet --num-tasks 3 --seed 1 --batch-size 32"
     " --nepochs 2 --lr-factor 10 --momentum 0.9 --lr-min 1e-7"
     " --num-workers 0"
-    ' --max-examples-per-class-trn 80'
+    " --max-examples-per-class-trn 80"
 )
 
 

@@ -97,7 +97,7 @@ class Appr(Inc_Learning_Appr):
             "--logit-conversion",
             default="inverse",
             type=str,
-            choices=["inverse", "pdf"],
+            choices=["inverse", "reverse", "pdf"],
             help="NMC distance to logits conversion (default=%(default)s)",
         )
         parser.add_argument(
@@ -476,6 +476,8 @@ class iCaRLModelWrapper(torch.nn.Module):
         # TODO do these logits make sense?
         if self.logit_conversion == "inverse":
             logits = 1 / (dists + 10e-6)
+        if self.logit_conversion == "reverse":
+            logits = -dists
         elif self.logit_conversion == "pdf":
             logits = self.nmc_probs(dists)
         else:

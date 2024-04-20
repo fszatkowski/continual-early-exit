@@ -14,28 +14,28 @@ class Appr(Inc_Learning_Appr):
     """
 
     def __init__(
-            self,
-            model,
-            device,
-            nepochs=100,
-            lr=0.05,
-            lr_min=1e-4,
-            lr_factor=3,
-            lr_patience=5,
-            clipgrad=10000,
-            momentum=0,
-            wd=0,
-            multi_softmax=False,
-            fix_bn=False,
-            eval_on_train=False,
-            select_best_model_by_val_loss=True,
-            logger=None,
-            exemplars_dataset=None,
-            scheduler_milestones=None,
-            lamb=5000,
-            alpha=0.5,
-            fi_sampling_type="max_pred",
-            fi_num_samples=-1,
+        self,
+        model,
+        device,
+        nepochs=100,
+        lr=0.05,
+        lr_min=1e-4,
+        lr_factor=3,
+        lr_patience=5,
+        clipgrad=10000,
+        momentum=0,
+        wd=0,
+        multi_softmax=False,
+        fix_bn=False,
+        eval_on_train=False,
+        select_best_model_by_val_loss=True,
+        logger=None,
+        exemplars_dataset=None,
+        scheduler_milestones=None,
+        lamb=5000,
+        alpha=0.5,
+        fi_sampling_type="max_pred",
+        fi_num_samples=-1,
     ):
         super(Appr, self).__init__(
             model,
@@ -202,7 +202,7 @@ class Appr(Inc_Learning_Appr):
                 self.fisher[n] = alpha * self.fisher[n] + (1 - alpha) * curr_fisher[n]
             else:
                 self.fisher[n] = (
-                        self.alpha * self.fisher[n] + (1 - self.alpha) * curr_fisher[n]
+                    self.alpha * self.fisher[n] + (1 - self.alpha) * curr_fisher[n]
                 )
 
     def criterion(self, t, outputs, targets):
@@ -214,8 +214,8 @@ class Appr(Inc_Learning_Appr):
             for n, p in self.model.model.named_parameters():
                 if n in self.fisher.keys():
                     loss_reg += (
-                            torch.sum(self.fisher[n] * (p - self.older_params[n]).pow(2))
-                            / 2
+                        torch.sum(self.fisher[n] * (p - self.older_params[n]).pow(2))
+                        / 2
                     )
             loss += self.lamb * loss_reg
         # Current cross-entropy loss -- with exemplars use all heads
