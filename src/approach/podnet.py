@@ -344,7 +344,9 @@ class Appr(Inc_Learning_Appr):
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
-            images, targets = images.to(self.device), targets.to(self.device)
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+
             # Forward current model, features = outputs of model without going through head
             outputs, features = self.model(images, return_features=True)
             # outputs = [outputs[idx]['logits'] for idx in range(len(outputs))]
@@ -379,9 +381,12 @@ class Appr(Inc_Learning_Appr):
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
+                images = images.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
+
                 # Forward current model
                 outputs, features = self.model(
-                    images.to(self.device), return_features=True
+                    images, return_features=True
                 )
                 if self.model.is_early_exit():
                     raise NotImplementedError()
@@ -392,14 +397,14 @@ class Appr(Inc_Learning_Appr):
                 ref_fmaps = None
                 if t > 0:
                     _, ref_features = self.ref_model(
-                        images.to(self.device), return_features=True
+                        images, return_features=True
                     )
                     ref_fmaps = self._get_podnet_ref_fmaps()
 
                 loss = self.criterion(
                     t,
                     outputs,
-                    targets.to(self.device),
+                    targets,
                     features,
                     fmaps,
                     ref_features,
@@ -428,42 +433,45 @@ class Appr(Inc_Learning_Appr):
         ref_fmaps=None,
         ref_outputs=None,
     ):
-        loss = 0
-        outputs = torch.cat(outputs, dim=1)
-        if self.nca_loss:
-            lsc_loss = nca(outputs, targets)
-            loss += lsc_loss
+        if self.model.is_early_exit():
+            raise NotImplementedError()
         else:
-            ce_loss = nn.CrossEntropyLoss(None)(outputs, targets)
-            loss += ce_loss
-        if ref_features is not None:
-            if self.pod_flat:
-                factor = self._pod_flat_factor * math.sqrt(
-                    self._n_classes / self._task_size
-                )
-                # pod flat loss is equivalent to less forget constraint loss acting on the final embeddings
-                pod_flat_loss = (
-                    F.cosine_embedding_loss(
-                        features,
-                        ref_features.detach(),
-                        torch.ones(features.shape[0]).to(self.device),
+            loss = 0
+            outputs = torch.cat(outputs, dim=1)
+            if self.nca_loss:
+                lsc_loss = nca(outputs, targets)
+                loss += lsc_loss
+            else:
+                ce_loss = nn.CrossEntropyLoss(None)(outputs, targets)
+                loss += ce_loss
+            if ref_features is not None:
+                if self.pod_flat:
+                    factor = self._pod_flat_factor * math.sqrt(
+                        self._n_classes / self._task_size
                     )
-                    * factor
-                )
-                loss += pod_flat_loss
+                    # pod flat loss is equivalent to less forget constraint loss acting on the final embeddings
+                    pod_flat_loss = (
+                        F.cosine_embedding_loss(
+                            features,
+                            ref_features.detach(),
+                            torch.ones(features.shape[0]).to(self.device),
+                        )
+                        * factor
+                    )
+                    loss += pod_flat_loss
 
-            if self.pod_spatial:
-                factor = self._pod_spatial_factor * math.sqrt(
-                    self._n_classes / self._task_size
-                )
-                spatial_loss = (
-                    pod_spatial_loss(
-                        fmaps, ref_fmaps, collapse_channels=self._pod_pool_type
+                if self.pod_spatial:
+                    factor = self._pod_spatial_factor * math.sqrt(
+                        self._n_classes / self._task_size
                     )
-                    * factor
-                )
-                loss += spatial_loss
-        return loss
+                    spatial_loss = (
+                        pod_spatial_loss(
+                            fmaps, ref_fmaps, collapse_channels=self._pod_pool_type
+                        )
+                        * factor
+                    )
+                    loss += spatial_loss
+            return loss
 
 
 class CosineLinear(nn.Module):

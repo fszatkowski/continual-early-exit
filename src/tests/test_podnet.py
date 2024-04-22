@@ -20,10 +20,10 @@ def test_podnet_exemplars():
     run_main_and_assert(args_line)
 
 
-# def test_podnet_exemplars_early_exit():
-#     args_line = FAST_LOCAL_TEST_ARGS
-#     args_line += " --num-exemplars-per-class 20"
-#     args_line += " --ic-type standard_conv standard_conv standard_fc"
-#     args_line += " --ic-layers conv1 conv2 fc1"
-#     args_line += " --input-size 1 28 28"
-#     run_main_and_assert(args_line)
+def test_podnet_exemplars_early_exit():
+    args_line = FAST_LOCAL_TEST_ARGS
+    args_line += " --num-exemplars-per-class 20"
+    args_line += " --ic-type standard_conv standard_conv"
+    args_line += " --ic-layers conv1 conv2"
+    args_line += " --input-size 1 28 28"
+    run_main_and_assert(args_line)
