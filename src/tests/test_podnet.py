@@ -7,9 +7,6 @@ FAST_LOCAL_TEST_ARGS = (
     " --num-workers 0"
     " --gridsearch-tasks -1"
     " --approach podnet"
-    " --max-examples-per-class-trn 200"
-    " --max-examples-per-class-val 20"
-    " --max-examples-per-class-tst 20"
 )
 
 

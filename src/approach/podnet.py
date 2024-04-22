@@ -3,6 +3,7 @@ import math
 import warnings
 from argparse import ArgumentParser
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -226,12 +227,8 @@ class Appr(Inc_Learning_Appr):
 
     def pre_train_process(self, t, trn_loader):
         """Runs before training all epochs of the task (before the train session)"""
-        # TODO refactor and extend to early exit version
+        # TODO refactor
         self.t = t
-        n_classes = self.model.heads[-1].out_features
-        self._task_size = n_classes
-        self._n_classes += n_classes
-        self.task_percent = (t + 1) / self.n_tasks
 
         # uncomment if you wish to use the factor as stated in the original repo, however gives slightly lower scores
         # if t == 0:
@@ -239,28 +236,83 @@ class Appr(Inc_Learning_Appr):
         # else:
         #     self.factor = math.sqrt(self._n_classes / (self._n_classes - self._task_size))
         # Changes the new head to a CosineLinear
-        # TODO add early exit version
+        if self.model.is_early_exit():
+            n_classes = self.model.heads[-1][-1].out_features
+            self._task_size = n_classes
+            self._n_classes += n_classes
+            self.task_percent = (t + 1) / self.n_tasks
 
-        self.model.heads[-1] = CosineLinear(
-            self.model.heads[-1].in_features,
-            self.model.heads[-1].out_features,
-            nb_proxy=10,
-            to_reduce=True,
-        )
+            n_classifiers = len(self.model.heads)
+            for n_cls in range(n_classifiers):
+                # Apply pooling in case of internal classifiers
+                cls_head = self.model.heads[n_cls][-1]
+                if isinstance(cls_head, nn.Linear):
+                    pooling = False
+                    in_features = cls_head.in_features
+                    out_features = cls_head.out_features
+                else:
+                    pooling = True
+                    in_features = cls_head.classifier.in_features
+                    out_features = cls_head.classifier.out_features
+                cosine_head = CosineLinear(
+                    in_features=in_features,
+                    out_features=out_features,
+                    nb_proxy=10,
+                    to_reduce=True,
+                    pooling=pooling,
+                )
+                self.model.heads[n_cls][-1] = cosine_head
+        else:
+            n_classes = self.model.heads[-1].out_features
+            self._task_size = n_classes
+            self._n_classes += n_classes
+            self.task_percent = (t + 1) / self.n_tasks
+
+            self.model.heads[-1] = CosineLinear(
+                self.model.heads[-1].in_features,
+                self.model.heads[-1].out_features,
+                nb_proxy=10,
+                to_reduce=True,
+            )
         self.model.to(self.device)
         if t > 0:
-            # Share sigma (Eta in paper) between all the heads
-            self.model.heads[-1].sigma = self.model.heads[-2].sigma
-            for h in self.model.heads[:-1]:
-                for param in h.parameters():
-                    param.requires_grad = False
-            self.model.heads[-1].sigma.requires_grad = True
-            # Eq. 7: Adaptive lambda
-            if self.adapt_lamda:
-                self.lamda = self.lamb * math.sqrt(
-                    sum([h.out_features for h in self.model.heads[:-1]])
-                    / self.model.heads[-1].out_features
-                )
+            if self.model.is_early_exit():
+                n_classifiers = len(self.model.heads)
+                for n_cls in range(n_classifiers - 1):
+                    # Share sigma (Eta in paper) between all the heads
+                    self.model.heads[n_cls][-1].sigma = self.model.heads[n_cls][
+                        -2
+                    ].sigma
+                    # Fix previous heads when Less-Forgetting constraint is activated (from original code)
+                    if self.pod_flat:
+                        for h in self.model.heads[n_cls][:-1]:
+                            for param in h.parameters():
+                                param.requires_grad = False
+                        self.model.heads[n_cls][-1].sigma.requires_grad = True
+                # Eq. 7: Adaptive lambda
+                if self.adapt_lamda:
+                    self.lamda = self.lamb * math.sqrt(
+                        sum(
+                            [
+                                h.out_features
+                                for h in self.model.heads[n_classifiers - 1][:-1]
+                            ]
+                        )
+                        / self.model.heads[n_classifiers - 1][-1].out_features
+                    )
+            else:
+                # Share sigma (Eta in paper) between all the heads
+                self.model.heads[-1].sigma = self.model.heads[-2].sigma
+                for h in self.model.heads[:-1]:
+                    for param in h.parameters():
+                        param.requires_grad = False
+                self.model.heads[-1].sigma.requires_grad = True
+                # Eq. 7: Adaptive lambda
+                if self.adapt_lamda:
+                    self.lamda = self.lamb * math.sqrt(
+                        sum([h.out_features for h in self.model.heads[:-1]])
+                        / self.model.heads[-1].out_features
+                    )
         # The original code has an option called "imprint weights" that seems to initialize the new head.
         # However, this is not mentioned in the paper and doesn't seem to make a significant difference.
         super().pre_train_process(t, trn_loader)
@@ -329,13 +381,17 @@ class Appr(Inc_Learning_Appr):
         self.ref_model = copy.deepcopy(self.model)
         self.ref_model.eval()
         # Make the old model return outputs without the sigma (eta in paper) factor
-        # TODO modify to early exit setting
-        if not self.ref_model.is_early_exit():
+        if self.ref_model.is_early_exit():
+            for cls_heads in self.ref_model.heads:
+                for task_head in cls_heads:
+                    task_head.train()
+        else:
             self.pod_fmap_ref_layer_hooks = register_intermediate_output_hooks(
                 self.ref_model.model, self.pod_fmap_layers
             )
             for h in self.ref_model.heads:
                 h.train()
+
         self.ref_model.freeze_all()
 
     def train_epoch(self, t, trn_loader):
@@ -351,19 +407,32 @@ class Appr(Inc_Learning_Appr):
             outputs, features = self.model(images, return_features=True)
             # outputs = [outputs[idx]['logits'] for idx in range(len(outputs))]
             if self.model.is_early_exit():
-                raise NotImplementedError()
+                fmaps = features[:-1]
+                features = features[-1]
+
+                # Forward previous model
+                ref_features = None
+                ref_fmaps = None
+                if t > 0:
+                    _, ref_features = self.ref_model(images, return_features=True)
+                    ref_fmaps = ref_features[:-1]
+                    ref_features = ref_features[-1]
             else:
                 fmaps = self._get_podnet_fmaps()
-            # Forward previous model
-            ref_features = None
-            ref_fmaps = None
-            if t > 0:
-                _, ref_features = self.ref_model(images, return_features=True)
-                ref_fmaps = self._get_podnet_ref_fmaps()
+                # Forward previous model
+                ref_features = None
+                ref_fmaps = None
+                if t > 0:
+                    _, ref_features = self.ref_model(images, return_features=True)
+                    ref_fmaps = self._get_podnet_ref_fmaps()
 
             loss = self.criterion(
                 t, outputs, targets, features, fmaps, ref_features, ref_fmaps
             )
+
+            if self.model.is_early_exit():
+                loss = sum(loss)
+
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -378,28 +447,37 @@ class Appr(Inc_Learning_Appr):
     def eval(self, t, val_loader):
         """Contains the evaluation code"""
         with torch.no_grad():
-            total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
+            if self.model.is_early_exit():
+                total_loss, total_acc_taw, total_acc_tag, total_num = (
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                    np.zeros((len(self.model.ic_layers) + 1,)),
+                )
+            else:
+                total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
+
             self.model.eval()
             for images, targets in val_loader:
                 images = images.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
 
                 # Forward current model
-                outputs, features = self.model(
-                    images, return_features=True
-                )
-                if self.model.is_early_exit():
-                    raise NotImplementedError()
-                else:
-                    fmaps = self._get_podnet_fmaps()
-
+                outputs, features = self.model(images, return_features=True)
                 ref_features = None
                 ref_fmaps = None
-                if t > 0:
-                    _, ref_features = self.ref_model(
-                        images, return_features=True
-                    )
-                    ref_fmaps = self._get_podnet_ref_fmaps()
+                if self.model.is_early_exit():
+                    fmaps = features[:-1]
+                    features = features[-1]
+                    if t > 0:
+                        _, ref_features = self.ref_model(images, return_features=True)
+                        ref_fmaps = ref_features[:-1]
+                        ref_features = ref_features[-1]
+                else:
+                    fmaps = self._get_podnet_fmaps()
+                    if t > 0:
+                        _, ref_features = self.ref_model(images, return_features=True)
+                        ref_fmaps = self._get_podnet_ref_fmaps()
 
                 loss = self.criterion(
                     t,
@@ -410,12 +488,25 @@ class Appr(Inc_Learning_Appr):
                     ref_features,
                     ref_fmaps,
                 )
-                hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
-                # Log
-                total_loss += loss.item() * len(targets)
-                total_acc_taw += hits_taw.sum().item()
-                total_acc_tag += hits_tag.sum().item()
-                total_num += len(targets)
+                if self.model.is_early_exit():
+                    for i, ic_outputs in enumerate(outputs):
+                        hits_taw, hits_tag = self.calculate_metrics(ic_outputs, targets)
+                        # Log
+                        total_loss += loss[i].item() * len(targets)
+                        total_acc_taw[i] += hits_taw.sum().item()
+                        total_acc_tag[i] += hits_tag.sum().item()
+                        total_num += len(targets)
+                else:
+                    hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
+                    # Log
+                    total_loss += loss.item() * len(targets)
+                    total_acc_taw += hits_taw.sum().item()
+                    total_acc_tag += hits_tag.sum().item()
+                    total_num += len(targets)
+
+            if self.model.is_early_exit():
+                total_num //= len(self.model.ic_layers) + 1
+
         return (
             total_loss / total_num,
             total_acc_taw / total_num,
@@ -434,7 +525,60 @@ class Appr(Inc_Learning_Appr):
         ref_outputs=None,
     ):
         if self.model.is_early_exit():
-            raise NotImplementedError()
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
+            )
+            n_classifiers = len(self.model.heads)
+
+            loss = []
+            for ic_idx in range(n_classifiers):
+                ic_loss = 0
+                ic_outputs = outputs[ic_idx]
+                if self.nca_loss:
+                    lsc_loss = nca(torch.cat(ic_outputs, dim=1), targets)
+                    ic_loss += lsc_loss
+                else:
+                    ce_loss = nn.CrossEntropyLoss(None)(
+                        torch.cat(ic_outputs, dim=1), targets
+                    )
+                    ic_loss += ce_loss
+                loss.append(ic_loss)
+
+            if ref_features is not None:
+                # Compute pod loss over conv fmaps
+                if self.pod_spatial:
+                    for ic_idx in range(n_classifiers - 1):
+                        ic_fmaps = fmaps[ic_idx]
+                        ic_ref_fmaps = ref_fmaps[ic_idx]
+                        factor = self._pod_spatial_factor * math.sqrt(
+                            self._n_classes / self._task_size
+                        )
+                        spatial_loss = (
+                            pod_spatial_loss(
+                                ic_fmaps,
+                                ic_ref_fmaps,
+                                collapse_channels=self._pod_pool_type,
+                            )
+                            * factor
+                        )
+                        loss[ic_idx] += spatial_loss
+
+                # Compute pod loss for last layer features
+                if self.pod_flat:
+                    factor = self._pod_flat_factor * math.sqrt(
+                        self._n_classes / self._task_size
+                    )
+                    # pod flat loss is equivalent to less forget constraint loss acting on the final embeddings
+                    pod_flat_loss = (
+                        F.cosine_embedding_loss(
+                            features,
+                            ref_features.detach(),
+                            torch.ones(features.shape[0]).to(self.device),
+                        )
+                        * factor
+                    )
+                    loss[-1] += pod_flat_loss
+            loss = [ic_weights[ic_idx] * ic_loss for ic_idx, ic_loss in enumerate(loss)]
         else:
             loss = 0
             outputs = torch.cat(outputs, dim=1)
@@ -471,7 +615,8 @@ class Appr(Inc_Learning_Appr):
                         * factor
                     )
                     loss += spatial_loss
-            return loss
+
+        return loss
 
 
 class CosineLinear(nn.Module):
@@ -480,11 +625,25 @@ class CosineLinear(nn.Module):
     """
 
     def __init__(
-        self, in_features, out_features, nb_proxy=1, to_reduce=False, sigma=True
+        self,
+        in_features,
+        out_features,
+        nb_proxy=1,
+        pooling=False,
+        to_reduce=False,
+        sigma=True,
     ):
         super(CosineLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features * nb_proxy
+        self.pooling = pooling
+        if pooling:
+            # TODO this is tailored for SDN type of IC
+            self.maxpool = nn.MaxPool2d(kernel_size=2)
+            self.avgpool = nn.AvgPool2d(kernel_size=2)
+            self.alpha = nn.Parameter(torch.rand(1).squeeze())
+        else:
+            self.register_parameter("alpha", None)
         self.nb_proxy = nb_proxy
         self.to_reduce = to_reduce
         self.weight = nn.Parameter(torch.Tensor(self.out_features, in_features))
@@ -499,10 +658,18 @@ class CosineLinear(nn.Module):
         self.weight.data.uniform_(-stdv, stdv)
         if self.sigma is not None:
             self.sigma.data.fill_(1)
+        if self.alpha is not None:
+            self.alpha.data.fill_(torch.rand(1).squeeze())
 
     def forward(self, input):
-        if type(input) is dict:
-            input = input["features"]
+        # TODO is this necessary?
+        # if type(input) is dict:
+        #     input = input["features"]
+        if self.pooling:
+            input = self.alpha * self.maxpool(input) + (1 - self.alpha) * self.avgpool(
+                input
+            )
+            input = input.view(input.size(0), -1)
         out = F.linear(
             F.normalize(input, p=2, dim=1), F.normalize(self.weight, p=2, dim=1)
         )
@@ -522,6 +689,8 @@ def reduce_proxies(out, nb_proxy):
         return out
     bs = out.shape[0]  # e.g. out.shape = [128, 500] for base task with 50 classes
     nb_classes = out.shape[1] / nb_proxy
+    if isinstance(nb_classes, torch.Tensor):
+        nb_classes = float(nb_classes)
     assert nb_classes.is_integer(), "Shape error"
     nb_classes = int(nb_classes)
 
