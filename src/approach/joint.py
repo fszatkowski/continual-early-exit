@@ -85,9 +85,15 @@ class Appr(Inc_Learning_Appr):
         """Runs after training all the epochs of the task (after the train session)"""
         if self.freeze_after > -1 and t >= self.freeze_after:
             self.model.freeze_all()
-            for head in self.model.heads:
-                for param in head.parameters():
-                    param.requires_grad = True
+            if self.model.is_early_exit():
+                for cls_heads in self.model.heads:
+                    for task_head in cls_heads:
+                        for param in task_head.parameters():
+                            param.requires_grad = True
+            else:
+                for head in self.model.heads:
+                    for param in head.parameters():
+                        param.requires_grad = True
 
     def train_loop(self, t, trn_loader, val_loader):
         """Contains the epochs loop"""
@@ -126,10 +132,12 @@ class Appr(Inc_Learning_Appr):
                 head.train()
         for images, targets in trn_loader:
             # Forward current model
-            outputs = self.model(images.to(self.device, non_blocking=True))
-            loss = self.criterion(
-                t, outputs, targets.to(self.device, non_blocking=True)
-            )
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+            outputs = self.model(images)
+            loss = self.criterion(t, outputs, targets)
+            if self.model.is_early_exit():
+                loss = sum(loss)
             # Backward
             self.optimizer.zero_grad()
             loss.backward()
@@ -140,7 +148,21 @@ class Appr(Inc_Learning_Appr):
 
     def criterion(self, t, outputs, targets):
         """Returns the loss value"""
-        return torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
+        if self.model.is_early_exit():
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
+            )
+            loss = []
+            for ic_outputs, ic_weight in zip(outputs, ic_weights):
+                loss.append(
+                    ic_weight
+                    * torch.nn.functional.cross_entropy(
+                        torch.cat(ic_outputs, dim=1), targets
+                    )
+                )
+            return loss
+        else:
+            return torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
 
 
 class JointDataset(Dataset):
