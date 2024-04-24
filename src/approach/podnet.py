@@ -44,14 +44,13 @@ class Appr(Inc_Learning_Appr):
         logger=None,
         exemplars_dataset=None,
         scheduler_milestones=None,
-        lamb=5.0,
-        pod_flat_factor=1.0,
-        pod_spatial_factor=3.0,
-        remove_adapt_lamda=False,
+        lamb_pod_flat=1.0,
+        lamb_pod_spatial=3.0,
         remove_pod_flat=False,
         remove_pod_spatial=False,
         remove_cross_entropy=False,
         pod_pool_type="spatial",
+        nb_proxy=10,
         nepochs_finetuning=20,
         lr_finetuning_factor=0.01,
         pod_fmap_layers=None,
@@ -75,17 +74,14 @@ class Appr(Inc_Learning_Appr):
             exemplars_dataset,
             scheduler_milestones,
         )
-        self.lamb = lamb
-        self.adapt_lamda = not remove_adapt_lamda
-
-        self.lamda = self.lamb
         self.ref_model = None
 
         self.pod_flat = not remove_pod_flat
         self.pod_spatial = not remove_pod_spatial
         self.nca_loss = not remove_cross_entropy
-        self._pod_flat_factor = pod_flat_factor
-        self._pod_spatial_factor = pod_spatial_factor
+        self.nb_proxy = nb_proxy
+        self.lamb_pod_flat = lamb_pod_flat
+        self.lamb_pod_spatial = lamb_pod_spatial
         self._pod_pool_type = pod_pool_type
         self._finetuning_balanced = None
         self.nepochs_finetuning = nepochs_finetuning
@@ -102,7 +98,7 @@ class Appr(Inc_Learning_Appr):
 
         self._n_classes = 0
         self._task_size = 0
-        self.task_percent = 0
+
         # LUCIR is expected to be used with exemplars. If needed to be used without exemplars, overwrite here the
         # `_get_optimizer` function with the one in LwF and update the criterion
         have_exemplars = (
@@ -122,29 +118,15 @@ class Appr(Inc_Learning_Appr):
     def extra_parser(args):
         """Returns a parser containing the approach specific parameters"""
         parser = ArgumentParser()
-        # Sec. 4.1: "lambda base is set to 5 for CIFAR100 and 10 for ImageNet"
         parser.add_argument(
-            "--lamb",
-            default=5.0,
-            type=float,
-            required=False,
-            help="Trade-off for distillation loss (default=%(default)s)",
-        )
-        parser.add_argument(
-            "--remove-adapt-lamda",
-            action="store_true",
-            required=False,
-            help="Deactivate adapting lambda according to the number of classes (default=%(default)s)",
-        )
-        parser.add_argument(
-            "--pod-spatial-factor",
+            "--lamb-pod-spatial",
             default=3.0,
             type=float,
             required=False,
             help="Scaling factor for pod spatial loss (default=%(default)s)",
         )
         parser.add_argument(
-            "--pod-flat-factor",
+            "--lamb-pod-flat",
             default=1.0,
             type=float,
             required=False,
@@ -182,6 +164,13 @@ class Appr(Inc_Learning_Appr):
             type=int,
             required=False,
             help="Number of epochs for balanced training (default=%(default)s)",
+        )
+        parser.add_argument(
+            "--nb-proxy",
+            type=int,
+            default=10,
+            required=False,
+            help="Number of proxies for cosine classifier (default=%(default)s)",
         )
         parser.add_argument(
             "--lr-finetuning-factor",
@@ -227,20 +216,11 @@ class Appr(Inc_Learning_Appr):
 
     def pre_train_process(self, t, trn_loader):
         """Runs before training all epochs of the task (before the train session)"""
-        # TODO refactor
-        self.t = t
-
-        # uncomment if you wish to use the factor as stated in the original repo, however gives slightly lower scores
-        # if t == 0:
-        #     self.factor = 0
-        # else:
-        #     self.factor = math.sqrt(self._n_classes / (self._n_classes - self._task_size))
         # Changes the new head to a CosineLinear
         if self.model.is_early_exit():
             n_classes = self.model.heads[-1][-1].out_features
             self._task_size = n_classes
             self._n_classes += n_classes
-            self.task_percent = (t + 1) / self.n_tasks
 
             n_classifiers = len(self.model.heads)
             for n_cls in range(n_classifiers):
@@ -257,7 +237,7 @@ class Appr(Inc_Learning_Appr):
                 cosine_head = CosineLinear(
                     in_features=in_features,
                     out_features=out_features,
-                    nb_proxy=10,
+                    nb_proxy=self.nb_proxy,
                     to_reduce=True,
                     pooling=pooling,
                 )
@@ -266,12 +246,11 @@ class Appr(Inc_Learning_Appr):
             n_classes = self.model.heads[-1].out_features
             self._task_size = n_classes
             self._n_classes += n_classes
-            self.task_percent = (t + 1) / self.n_tasks
 
             self.model.heads[-1] = CosineLinear(
                 self.model.heads[-1].in_features,
                 self.model.heads[-1].out_features,
-                nb_proxy=10,
+                nb_proxy=self.nb_proxy,
                 to_reduce=True,
             )
         self.model.to(self.device)
@@ -289,17 +268,6 @@ class Appr(Inc_Learning_Appr):
                             for param in h.parameters():
                                 param.requires_grad = False
                         self.model.heads[n_cls][-1].sigma.requires_grad = True
-                # Eq. 7: Adaptive lambda
-                if self.adapt_lamda:
-                    self.lamda = self.lamb * math.sqrt(
-                        sum(
-                            [
-                                h.out_features
-                                for h in self.model.heads[n_classifiers - 1][:-1]
-                            ]
-                        )
-                        / self.model.heads[n_classifiers - 1][-1].out_features
-                    )
             else:
                 # Share sigma (Eta in paper) between all the heads
                 self.model.heads[-1].sigma = self.model.heads[-2].sigma
@@ -307,12 +275,6 @@ class Appr(Inc_Learning_Appr):
                     for param in h.parameters():
                         param.requires_grad = False
                 self.model.heads[-1].sigma.requires_grad = True
-                # Eq. 7: Adaptive lambda
-                if self.adapt_lamda:
-                    self.lamda = self.lamb * math.sqrt(
-                        sum([h.out_features for h in self.model.heads[:-1]])
-                        / self.model.heads[-1].out_features
-                    )
         # The original code has an option called "imprint weights" that seems to initialize the new head.
         # However, this is not mentioned in the paper and doesn't seem to make a significant difference.
         super().pre_train_process(t, trn_loader)
@@ -550,7 +512,7 @@ class Appr(Inc_Learning_Appr):
                     for ic_idx in range(n_classifiers - 1):
                         ic_fmaps = fmaps[ic_idx]
                         ic_ref_fmaps = ref_fmaps[ic_idx]
-                        factor = self._pod_spatial_factor * math.sqrt(
+                        factor = self.lamb_pod_spatial * math.sqrt(
                             self._n_classes / self._task_size
                         )
                         spatial_loss = (
@@ -565,7 +527,7 @@ class Appr(Inc_Learning_Appr):
 
                 # Compute pod loss for last layer features
                 if self.pod_flat:
-                    factor = self._pod_flat_factor * math.sqrt(
+                    factor = self.lamb_pod_flat * math.sqrt(
                         self._n_classes / self._task_size
                     )
                     # pod flat loss is equivalent to less forget constraint loss acting on the final embeddings
@@ -590,7 +552,7 @@ class Appr(Inc_Learning_Appr):
                 loss += ce_loss
             if ref_features is not None:
                 if self.pod_flat:
-                    factor = self._pod_flat_factor * math.sqrt(
+                    factor = self.lamb_pod_flat * math.sqrt(
                         self._n_classes / self._task_size
                     )
                     # pod flat loss is equivalent to less forget constraint loss acting on the final embeddings
@@ -605,7 +567,7 @@ class Appr(Inc_Learning_Appr):
                     loss += pod_flat_loss
 
                 if self.pod_spatial:
-                    factor = self._pod_spatial_factor * math.sqrt(
+                    factor = self.lamb_pod_spatial * math.sqrt(
                         self._n_classes / self._task_size
                     )
                     spatial_loss = (

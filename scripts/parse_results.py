@@ -40,7 +40,7 @@ def plot_compare(data, output_path):
 
 if __name__ == "__main__":
     root_name = 'results'
-    output_dir = Path('parsed_results') / 'athena_v2'
+    output_dir = Path('parsed_results') / 'athena_v3'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     root_dir = Path(root_name)
@@ -118,4 +118,7 @@ if __name__ == "__main__":
         method_data = {method_name: method_data for method_name, method_data in plot_data.items() if
                        method_name.startswith(p)}
         sorted_method_data = {k: v for k, v in sorted(method_data.items(), key=lambda item: item[0])}
-        plot_compare(sorted_method_data, output_dir / (p + ".png"))
+        # sorted_method_data = {k: v for k, v in sorted_method_data.items() if not "norm" in k}
+        # sorted_method_data = {k: v for k, v in sorted_method_data.items() if "pool" in k}
+        if len(sorted_method_data):
+            plot_compare(sorted_method_data, output_dir / (p + ".png"))
