@@ -1,6 +1,5 @@
 import time
 from argparse import ArgumentParser
-from copy import deepcopy
 
 import numpy as np
 import torch

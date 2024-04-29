@@ -310,7 +310,7 @@ class Inc_Learning_Appr:
         self.model.eval()
         with torch.no_grad():
             if exit_costs is None:
-                logging.info(f"Profiling FLOPs per-layer...")
+                logging.info("Profiling FLOPs per-layer...")
                 samples, _ = next(iter(deepcopy(dataloader)))
                 sample = samples[:1].to(self.device)
                 exit_costs = []
@@ -532,10 +532,10 @@ class Inc_Learning_Appr:
                     task=t, iter=e + 1, name=f"acc_c_{i}", value=100 * a, group=group
                 )
             self.logger.log_scalar(
-                task=t, iter=e + 1, name=f"loss", value=loss[-1], group=group
+                task=t, iter=e + 1, name="loss", value=loss[-1], group=group
             )
             self.logger.log_scalar(
-                task=t, iter=e + 1, name=f"acc", value=100 * acc[-1], group=group
+                task=t, iter=e + 1, name="acc", value=100 * acc[-1], group=group
             )
         else:
             self.logger.log_scalar(
