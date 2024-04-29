@@ -43,4 +43,3 @@ for seed in 0; do
     --save-models \
     --tags ${tag}
 done
-

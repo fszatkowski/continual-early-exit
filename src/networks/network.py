@@ -5,7 +5,6 @@ from torch import nn
 
 from networks.ic_utils import (
     create_ic,
-    get_alt_sdn_weights,
     get_sdn_weights,
     register_intermediate_output_hooks,
 )
@@ -220,13 +219,11 @@ class LLL_Net(nn.Module):
 
     def get_ic_weights(self, current_epoch, max_epochs):
         if self.ic_weighting == "sdn":
-            return get_sdn_weights(current_epoch, max_epochs)
+            return get_sdn_weights(current_epoch, max_epochs, n_ics=len(self.ic_layers))
         if self.ic_weighting == "sdn_normalized":
-            sdn_weights = get_sdn_weights(current_epoch, max_epochs)
+            sdn_weights = get_sdn_weights(current_epoch, max_epochs, n_ics=len(self.ic_layers))
             norm = sum(sdn_weights)
             return [w / norm for w in sdn_weights]
-        if self.ic_weighting == "alt_sdn":
-            return get_alt_sdn_weights(current_epoch, max_epochs)
         elif self.ic_weighting == "uniform":
             return [1.0] * (len(self.ic_layers) + 1)
         else:

@@ -45,8 +45,14 @@ class StandardConvHead(nn.Module):
             return cls_output
 
 
-def get_sdn_weights(current_epoch, total_epochs):
-    final_weights = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]
+def get_sdn_weights(current_epoch, total_epochs, n_ics):
+    if n_ics == 6:
+        final_weights = [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]
+    elif n_ics == 7:
+        final_weights = [0.2, 0.3, 0.4, 0.55, 0.65, 0.75, 0.9]
+    else:
+        raise NotImplementedError()
+
     start_val = 0.01
     current_weights = [
         start_val + (current_epoch / (total_epochs - 1)) * (final_weight - start_val)
@@ -76,7 +82,6 @@ class RegisterForwardHook:
 def register_intermediate_output_hooks(model, layers):
     hooks = []
     modules = [(name, module) for name, module in model.named_modules()]
-    module_names = [n for n, _ in modules]
     for layer_name in layers:
         module_found = False
         for module_name, module in modules:
