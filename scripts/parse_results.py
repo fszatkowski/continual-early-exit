@@ -40,7 +40,7 @@ def plot_compare(data, output_path):
 
 if __name__ == "__main__":
     root_name = 'results'
-    output_dir = Path('parsed_results') / 'athena_v3'
+    output_dir = Path('parsed_results') / 'cifar100x5'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     root_dir = Path(root_name)

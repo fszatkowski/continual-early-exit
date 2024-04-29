@@ -61,20 +61,47 @@ class Appr(Inc_Learning_Appr):
         self.sampling_type = fi_sampling_type
         self.num_samples = fi_num_samples
 
-        # In all cases, we only keep importance weights for the model, but not for the heads.
         feat_ext = self.model.model
         # Store current parameters as the initial parameters before first task starts
-        self.older_params = {
+        older_params = {
             n: p.clone().detach()
             for n, p in feat_ext.named_parameters()
             if p.requires_grad
         }
         # Store fisher information weight importance
-        self.fisher = {
+        fisher = {
             n: torch.zeros(p.shape).to(self.device, non_blocking=True)
             for n, p in feat_ext.named_parameters()
             if p.requires_grad
         }
+
+        if self.model.is_early_exit():
+            self.older_params = []
+            self.fisher = []
+            self.fisher_modules = []
+
+            for ic_layer_name in self.model.ic_layers:
+                feat_ext = self._get_module_by_name(ic_layer_name)
+                ic_older_params = {
+                    n: p.clone().detach()
+                    for n, p in feat_ext.named_parameters()
+                    if p.requires_grad
+                }
+                # Store fisher information weight importance
+                ic_fisher = {
+                    n: torch.zeros(p.shape).to(self.device, non_blocking=True)
+                    for n, p in feat_ext.named_parameters()
+                    if p.requires_grad
+                }
+                self.older_params.append(ic_older_params)
+                self.fisher.append(ic_fisher)
+                self.fisher_modules.append(feat_ext)
+            self.older_params.append(older_params)
+            self.fisher.append(fisher)
+            self.fisher_modules.append(self.model.model)
+        else:
+            self.older_params = older_params
+            self.fisher = fisher
 
     @staticmethod
     def exemplars_dataset_class():
@@ -118,13 +145,40 @@ class Appr(Inc_Learning_Appr):
 
         return parser.parse_known_args(args)
 
+    def _get_module_by_name(self, module_name):
+        feat_ext = None
+        for name, module in self.model.model.named_modules():
+            if name == module_name:
+                return module
+        if feat_ext is None:
+            raise ValueError(f"Module {module_name} not found")
+
     def compute_fisher_matrix_diag(self, trn_loader):
         # Store Fisher Information
-        fisher = {
-            n: torch.zeros(p.shape).to(self.device, non_blocking=True)
-            for n, p in self.model.model.named_parameters()
-            if p.requires_grad
-        }
+        if self.model.is_early_exit():
+            fisher = []
+            for ic_layer_name in self.model.ic_layers:
+                feat_ext = self._get_module_by_name(ic_layer_name)
+                # Store fisher information weight importance
+                ic_fisher = {
+                    n: torch.zeros(p.shape).to(self.device, non_blocking=True)
+                    for n, p in feat_ext.named_parameters()
+                    if p.requires_grad
+                }
+                fisher.append(ic_fisher)
+            fisher.append(
+                {
+                    n: torch.zeros(p.shape).to(self.device, non_blocking=True)
+                    for n, p in self.model.model.named_parameters()
+                    if p.requires_grad
+                }
+            )
+        else:
+            fisher = {
+                n: torch.zeros(p.shape).to(self.device, non_blocking=True)
+                for n, p in self.model.model.named_parameters()
+                if p.requires_grad
+            }
         # Compute fisher information for specified number of samples -- rounded to the batch size
         n_samples_batches = (
             (self.num_samples // trn_loader.batch_size + 1)
@@ -134,29 +188,69 @@ class Appr(Inc_Learning_Appr):
         # Do forward and backward pass to compute the fisher information
         self.model.train()
         for images, targets in itertools.islice(trn_loader, n_samples_batches):
-            outputs = self.model.forward(images.to(self.device, non_blocking=True))
+            images = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
 
-            if self.sampling_type == "true":
-                # Use the labels to compute the gradients based on the CE-loss with the ground truth
-                preds = targets.to(self.device, non_blocking=True)
-            elif self.sampling_type == "max_pred":
-                # Not use labels and compute the gradients related to the prediction the model has learned
-                preds = torch.cat(outputs, dim=1).argmax(1).flatten()
-            elif self.sampling_type == "multinomial":
-                # Use a multinomial sampling to compute the gradients
-                probs = torch.nn.functional.softmax(torch.cat(outputs, dim=1), dim=1)
-                preds = torch.multinomial(probs, len(targets)).flatten()
+            outputs = self.model.forward(images)
 
-            loss = torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), preds)
-            self.optimizer.zero_grad()
-            loss.backward()
-            # Accumulate all gradients from loss with regularization
-            for n, p in self.model.model.named_parameters():
-                if p.grad is not None:
-                    fisher[n] += p.grad.pow(2) * len(targets)
-        # Apply mean across all samples
-        n_samples = n_samples_batches * trn_loader.batch_size
-        fisher = {n: (p / n_samples) for n, p in fisher.items()}
+            # Compute fisher information
+            if self.model.is_early_exit():
+                for ic_idx in range(len(outputs)):
+                    ic_outputs = outputs[ic_idx]
+                    ic_module = self.fisher_modules[ic_idx]
+                    if self.sampling_type == "true":
+                        # Use the labels to compute the gradients based on the CE-loss with the ground truth
+                        preds = targets
+                    elif self.sampling_type == "max_pred":
+                        # Not use labels and compute the gradients related to the prediction the model has learned
+                        preds = torch.cat(ic_outputs, dim=1).argmax(1).flatten()
+                    elif self.sampling_type == "multinomial":
+                        # Use a multinomial sampling to compute the gradients
+                        probs = torch.nn.functional.softmax(
+                            torch.cat(ic_outputs, dim=1), dim=1
+                        )
+                        preds = torch.multinomial(probs, len(targets)).flatten()
+                    loss = torch.nn.functional.cross_entropy(
+                        torch.cat(ic_outputs, dim=1), preds
+                    )
+                    self.optimizer.zero_grad()
+                    loss.backward(retain_graph=True)
+                    # Accumulate all gradients from loss with regularization
+                    for n, p in ic_module.named_parameters():
+                        if p.grad is not None:
+                            fisher[ic_idx][n] += p.grad.pow(2) * len(targets)
+            else:
+                if self.sampling_type == "true":
+                    # Use the labels to compute the gradients based on the CE-loss with the ground truth
+                    preds = targets
+                elif self.sampling_type == "max_pred":
+                    # Not use labels and compute the gradients related to the prediction the model has learned
+                    preds = torch.cat(outputs, dim=1).argmax(1).flatten()
+                elif self.sampling_type == "multinomial":
+                    # Use a multinomial sampling to compute the gradients
+                    probs = torch.nn.functional.softmax(
+                        torch.cat(outputs, dim=1), dim=1
+                    )
+                    preds = torch.multinomial(probs, len(targets)).flatten()
+
+                loss = torch.nn.functional.cross_entropy(
+                    torch.cat(outputs, dim=1), preds
+                )
+                self.optimizer.zero_grad()
+                loss.backward()
+                # Accumulate all gradients from loss with regularization
+                for n, p in self.model.model.named_parameters():
+                    if p.grad is not None:
+                        fisher[n] += p.grad.pow(2) * len(targets)
+            # Apply mean across all samples
+            n_samples = n_samples_batches * trn_loader.batch_size
+            if self.model.is_early_exit():
+                for ic_idx in range(len(fisher)):
+                    fisher[ic_idx] = {
+                        n: (p / n_samples) for n, p in fisher[ic_idx].items()
+                    }
+            else:
+                fisher = {n: (p / n_samples) for n, p in fisher.items()}
         return fisher
 
     def train_loop(self, t, trn_loader, val_loader):
@@ -184,45 +278,110 @@ class Appr(Inc_Learning_Appr):
         """Runs after training all the epochs of the task (after the train session)"""
 
         # Store current parameters for the next task
-        self.older_params = {
-            n: p.clone().detach()
-            for n, p in self.model.model.named_parameters()
-            if p.requires_grad
-        }
+        if self.model.is_early_exit():
+            for ic_idx in range(len(self.older_params)):
+                self.older_params[ic_idx] = {
+                    n: p.clone().detach()
+                    for n, p in self.fisher_modules[ic_idx].named_parameters()
+                    if p.requires_grad
+                }
+        else:
+            self.older_params = {
+                n: p.clone().detach()
+                for n, p in self.model.model.named_parameters()
+                if p.requires_grad
+            }
 
         # calculate Fisher information
         curr_fisher = self.compute_fisher_matrix_diag(trn_loader)
         # merge fisher information, we do not want to keep fisher information for each task in memory
-        for n in self.fisher.keys():
-            # Added option to accumulate fisher over time with a pre-fixed growing alpha
-            if self.alpha == -1:
-                alpha = (sum(self.model.task_cls[:t]) / sum(self.model.task_cls)).to(
-                    self.device, non_blocking=True
-                )
-                self.fisher[n] = alpha * self.fisher[n] + (1 - alpha) * curr_fisher[n]
-            else:
-                self.fisher[n] = (
-                    self.alpha * self.fisher[n] + (1 - self.alpha) * curr_fisher[n]
-                )
+        if self.model.is_early_exit():
+            for ic_idx, ic_fisher in enumerate(self.fisher):
+                curr_ic_fisher = curr_fisher[ic_idx]
+                for n in ic_fisher.keys():
+                    if self.alpha == -1:
+                        alpha = (
+                            sum(self.model.task_cls[:t]) / sum(self.model.task_cls)
+                        ).to(self.device, non_blocking=True)
+                        ic_fisher[n] = (
+                            alpha * ic_fisher[n] + (1 - alpha) * curr_ic_fisher[n]
+                        )
+                    else:
+                        ic_fisher[n] = (
+                            self.alpha * ic_fisher[n]
+                            + (1 - self.alpha) * curr_ic_fisher[n]
+                        )
+        else:
+            for n in self.fisher.keys():
+                # Added option to accumulate fisher over time with a pre-fixed growing alpha
+                if self.alpha == -1:
+                    alpha = (
+                        sum(self.model.task_cls[:t]) / sum(self.model.task_cls)
+                    ).to(self.device, non_blocking=True)
+                    self.fisher[n] = (
+                        alpha * self.fisher[n] + (1 - alpha) * curr_fisher[n]
+                    )
+                else:
+                    self.fisher[n] = (
+                        self.alpha * self.fisher[n] + (1 - self.alpha) * curr_fisher[n]
+                    )
 
     def criterion(self, t, outputs, targets):
         """Returns the loss value"""
-        loss = 0
-        if t > 0:
-            loss_reg = 0
-            # Eq. 3: elastic weight consolidation quadratic penalty
-            for n, p in self.model.model.named_parameters():
-                if n in self.fisher.keys():
-                    loss_reg += (
-                        torch.sum(self.fisher[n] * (p - self.older_params[n]).pow(2))
-                        / 2
-                    )
-            loss += self.lamb * loss_reg
-        # Current cross-entropy loss -- with exemplars use all heads
-        if len(self.exemplars_dataset) > 0:
-            return loss + torch.nn.functional.cross_entropy(
-                torch.cat(outputs, dim=1), targets
+        if self.model.is_early_exit():
+            loss = []
+            ic_weights = self.model.get_ic_weights(
+                current_epoch=self.current_epoch, max_epochs=self.nepochs
             )
-        return loss + torch.nn.functional.cross_entropy(
-            outputs[t], targets - self.model.task_offset[t]
-        )
+            for ic_idx in range(len(outputs)):
+                ic_outputs = outputs[ic_idx]
+                ic_loss_reg = 0
+
+                if t > 0:
+                    ic_fisher = self.fisher[ic_idx]
+                    ic_older_params = self.older_params[ic_idx]
+                    ic_fisher_module = self.fisher_modules[ic_idx]
+                    for n, p in ic_fisher_module.named_parameters():
+                        if n in ic_fisher.keys():
+                            ic_loss_reg += (
+                                torch.sum(
+                                    ic_fisher[n] * (p - ic_older_params[n]).pow(2)
+                                )
+                                / 2
+                            )
+
+                # Current cross-entropy loss -- with exemplars use all heads
+                if len(self.exemplars_dataset) > 0:
+                    ic_loss_ce = torch.nn.functional.cross_entropy(
+                        torch.cat(ic_outputs, dim=1), targets
+                    )
+                else:
+                    ic_loss_ce = torch.nn.functional.cross_entropy(
+                        ic_outputs[t], targets - self.model.task_offset[t]
+                    )
+                ic_loss = ic_loss_ce + self.lamb * ic_loss_reg
+                ic_loss = ic_weights[ic_idx] * ic_loss
+                loss.append(ic_loss)
+        else:
+            loss_reg = 0
+            if t > 0:
+                # Eq. 3: elastic weight consolidation quadratic penalty
+                for n, p in self.model.model.named_parameters():
+                    if n in self.fisher.keys():
+                        loss_reg += (
+                            torch.sum(
+                                self.fisher[n] * (p - self.older_params[n]).pow(2)
+                            )
+                            / 2
+                        )
+            # Current cross-entropy loss -- with exemplars use all heads
+            if len(self.exemplars_dataset) > 0:
+                loss_ce = torch.nn.functional.cross_entropy(
+                    torch.cat(outputs, dim=1), targets
+                )
+            else:
+                loss_ce = torch.nn.functional.cross_entropy(
+                    outputs[t], targets - self.model.task_offset[t]
+                )
+            loss = loss_ce + self.lamb * loss_reg
+        return loss

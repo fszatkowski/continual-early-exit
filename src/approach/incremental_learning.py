@@ -2,6 +2,7 @@ import logging
 import time
 from argparse import ArgumentParser
 from copy import deepcopy
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -346,6 +347,7 @@ class Inc_Learning_Appr:
             }
 
             total_cnt = 0
+            batch_idx = 0
             for images, targets in dataloader:
                 images = images.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
@@ -467,6 +469,17 @@ class Inc_Learning_Appr:
                 )
 
                 total_cnt += len(targets)
+                output_dir = Path(self.logger.exp_path) / "logits"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    {
+                        "outputs_tag": merged_outputs_tag,
+                        "outputs_taw": merged_outputs_taw,
+                        "targets": targets,
+                    },
+                    output_dir / f"{batch_idx}.pt",
+                )
+                batch_idx += 1
 
             per_ic_accuracy = {
                 acc_type: hits / total_cnt for acc_type, hits in per_ic_hits.items()

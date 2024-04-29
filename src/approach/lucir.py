@@ -180,8 +180,16 @@ class Appr(Inc_Learning_Appr):
             # Sec. 4.1: "the ReLU in the penultimate layer is removed to allow the features to take both positive and
             # negative values"
             if self.model.model.__class__.__name__ == "ResNet":
-                old_block = self.model.model.layer3[-1]
-                self.model.model.layer3[-1] = BasicBlockNoRelu(
+                last_block_name = None
+                last_layer_idx = 1
+                while hasattr(self.model.model, f"layer{last_layer_idx + 1}"):
+                    last_layer_idx += 1
+                print(f"Replacing last layer at layer{last_layer_idx}...")
+                last_layer = getattr(self.model.model, f"layer{last_layer_idx}")
+                old_block = last_layer[-1]
+                if old_block.__class__.__name__ != "BasicBlock":
+                    warnings.warn("Final resnet layer is not a BasicBlock instance")
+                new_block = BasicBlockNoRelu(
                     old_block.conv1,
                     old_block.bn1,
                     old_block.relu,
@@ -189,6 +197,8 @@ class Appr(Inc_Learning_Appr):
                     old_block.bn2,
                     old_block.downsample,
                 )
+                last_layer = getattr(self.model.model, f"layer{last_layer_idx}")
+                last_layer[-1] = new_block
             else:
                 warnings.warn("Warning: ReLU not removed from last block.")
         # Changes the new head to a CosineLinear
