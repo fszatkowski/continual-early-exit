@@ -857,7 +857,12 @@ def main(argv=None):
         for u in range(max_task):
             exit_costs, baseline_cost, per_ic_acc, per_th_acc, per_th_exit_cnt = (
                 appr.eval_early_exit(
-                    u, tst_loader[u], ee_thresholds, exit_costs, baseline_cost
+                    u,
+                    tst_loader[u],
+                    ee_thresholds,
+                    exit_costs,
+                    baseline_cost,
+                    subset="test",
                 )
             )
             results[u] = {
@@ -873,6 +878,16 @@ def main(argv=None):
         np.save(results_path, results)
         plot_path = Path(logger.exp_path) / "results" / "ee_eval.png"
         visualize_ee_results(results["avg"], plot_path)
+
+        last_task_id = len(trn_loader) - 1
+        appr.eval_early_exit(
+            last_task_id,
+            trn_loader[last_task_id],
+            ee_thresholds,
+            exit_costs,
+            baseline_cost,
+            subset="train",
+        )
 
     print("[Elapsed time = {:.1f} h]".format((time.time() - tstart) / (60 * 60)))
     print("Done!")

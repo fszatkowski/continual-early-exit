@@ -303,6 +303,7 @@ class Inc_Learning_Appr:
         exit_costs=None,
         baseline_cost=None,
         no_exit_strategy="max_conf",
+        subset="test",
     ):
         """Evaluate early exit properties of the network"""
         """ Evaluate per-IC cost of the inference """
@@ -469,7 +470,7 @@ class Inc_Learning_Appr:
                 )
 
                 total_cnt += len(targets)
-                output_dir = Path(self.logger.exp_path) / "logits" / f"t_{t}"
+                output_dir = Path(self.logger.exp_path) / f"logits_{subset}" / f"t_{t}"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(
                     {
