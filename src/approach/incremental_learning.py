@@ -469,7 +469,7 @@ class Inc_Learning_Appr:
                 )
 
                 total_cnt += len(targets)
-                output_dir = Path(self.logger.exp_path) / "logits"
+                output_dir = Path(self.logger.exp_path) / "logits" / f"t_{t}"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(
                     {
