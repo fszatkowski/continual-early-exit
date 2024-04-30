@@ -1,23 +1,30 @@
+import math
+from typing import Tuple
+
 import torch
 from torch import nn
 
 
-def create_ic(ic_type, ic_input_size, num_outputs):
+def create_ic(ic_type: str, ic_input_size: Tuple[int, ...], num_outputs: int):
     if ic_type == "standard_conv":
         return StandardConvHead(ic_input_size, num_outputs)
+    elif ic_type == "adaptive_standard_conv":
+        return AdaptiveStandardConvHead(ic_input_size, num_outputs)
     elif ic_type == "basic_conv":
         return BasicConvHead(ic_input_size, num_outputs)
     elif ic_type == "standard_fc":
-        return nn.Linear(ic_input_size, num_outputs)
+        num_ic_features = math.prod(ic_input_size)
+        return nn.Linear(num_ic_features, num_outputs)
     else:
         raise NotImplementedError()
 
 
 class BasicConvHead(nn.Module):
-    def __init__(self, input_features, num_classes):
+    def __init__(self, input_features: Tuple[int, ...], num_classes: int):
         super().__init__()
         self.maxpool = nn.MaxPool2d(kernel_size=2)
-        self.classifier = nn.Linear(input_features // 4, num_classes)
+        num_input_features = math.prod(input_features)
+        self.classifier = nn.Linear(num_input_features // 4, num_classes)
 
     def forward(self, x, return_features=False):
         pool_output = self.maxpool(x)
@@ -28,13 +35,34 @@ class BasicConvHead(nn.Module):
             return cls_output
 
 
+class AdaptiveStandardConvHead(nn.Module):
+    def __init__(self, input_features: Tuple[int, ...], num_classes: int):
+        super().__init__()
+        _, c, h, w = input_features
+        h_new = math.ceil(h / 2)
+        w_new = math.ceil(w / 2)
+        self.maxpool = nn.AdaptiveMaxPool2d((h_new, w_new))
+        self.avgpool = nn.AdaptiveAvgPool2d((h_new, w_new))
+        self.alpha = nn.Parameter(torch.rand(1))
+        self.classifier = nn.Linear(c * h_new * w_new, num_classes)
+
+    def forward(self, x, return_features=False):
+        pool_output = self.alpha * self.maxpool(x) + (1 - self.alpha) * self.avgpool(x)
+        cls_output = self.classifier(pool_output.view(pool_output.size(0), -1))
+        if return_features:
+            return cls_output, pool_output
+        else:
+            return cls_output
+
+
 class StandardConvHead(nn.Module):
-    def __init__(self, input_features, num_classes):
+    def __init__(self, input_features: Tuple[int, ...], num_classes: int):
         super().__init__()
         self.maxpool = nn.MaxPool2d(kernel_size=2)
         self.avgpool = nn.AvgPool2d(kernel_size=2)
         self.alpha = nn.Parameter(torch.rand(1))
-        self.classifier = nn.Linear(input_features // 4, num_classes)
+        num_input_features = math.prod(input_features)
+        self.classifier = nn.Linear(num_input_features // 4, num_classes)
 
     def forward(self, x, return_features=False):
         pool_output = self.alpha * self.maxpool(x) + (1 - self.alpha) * self.avgpool(x)

@@ -132,20 +132,17 @@ def parse_args():
     )
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument(
-        "--dataset", type=str, choices=["cifar100", "tiny", "in"], default="cifar100"
-    )
-    parser.add_argument(
         "--optimization_algorithm",
         type=str,
         choices=["tpe", "random"],
         default="tpe",
     )
-    parser.add_argument("--max_iters", type=int, default=1000)
+    parser.add_argument("--max_iters", type=int, default=2000)
     parser.add_argument(
         "--hp_space", type=str, choices=["normal", "uniform"], default="normal"
     )
     parser.add_argument("--hp_mu", type=float, default=0)
-    parser.add_argument("--hp_sigma", type=float, default=5)
+    parser.add_argument("--hp_sigma", type=float, default=1)
     parser.add_argument("--hp_min", type=float, default=-2)
     parser.add_argument("--hp_max", type=float, default=2)
     parser.add_argument("--device", type=str, default="cpu")

@@ -14,13 +14,13 @@ class LLL_Net(nn.Module):
     """Basic class for implementing networks"""
 
     def __init__(
-        self,
-        model,
-        remove_existing_head=False,
-        ic_type=None,
-        ic_layers=None,
-        input_size=None,
-        ic_weighting="sdn",
+            self,
+            model,
+            remove_existing_head=False,
+            ic_type=None,
+            ic_layers=None,
+            input_size=None,
+            ic_weighting="sdn",
     ):
         head_var = model.head_var
         assert type(head_var) == str
@@ -65,6 +65,7 @@ class LLL_Net(nn.Module):
             self.intermediate_output_hooks = register_intermediate_output_hooks(
                 model, ic_layers
             )
+            assert len(self.intermediate_output_hooks) == len(ic_layers)
 
             model.eval()
             with torch.no_grad():
@@ -72,9 +73,10 @@ class LLL_Net(nn.Module):
                 model(x)
             for hook in self.intermediate_output_hooks:
                 self.heads.append(nn.ModuleList())
-                input_size = hook.output.numel()
-                self.ic_input_sizes.append(input_size)
+                ic_input_size = hook.output.shape
+                self.ic_input_sizes.append(ic_input_size)
             self.heads.append(nn.ModuleList())
+            assert len(self.heads) == len(ic_layers) + 1
         else:
             self.heads = nn.ModuleList()
 
@@ -127,7 +129,6 @@ class LLL_Net(nn.Module):
                 return y
         else:
             features = []
-            outputs = []
 
             final_features = self.model(x)
             for i, feature_hook in enumerate(self.intermediate_output_hooks):
@@ -137,11 +138,13 @@ class LLL_Net(nn.Module):
 
             assert len(features) == len(self.ic_layers) + 1
 
-            for ic_features, heads in zip(features, self.heads):
+            outputs = []
+            for head_idx, (ic_features, heads) in enumerate(zip(features, self.heads)):
                 head_outputs = []
                 for head in heads:
                     head_outputs.append(head(ic_features))
                 outputs.append(head_outputs)
+            assert len(outputs) == len(self.ic_layers) + 1
 
             if self.exit_layer_idx == -1:
                 # for baseline no-ee net profiling
