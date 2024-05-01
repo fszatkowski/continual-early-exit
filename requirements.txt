@@ -1,8 +1,8 @@
 # NOTE: Previous versions of pytorch and torchvision might also work as well,
 # but we haven't test them yet
-torch==1.11
-torchvision==0.12.0
-fvcore==0.1.5
+torch
+torchvision
+fvcore
 matplotlib
 numpy
 seaborn
@@ -10,3 +10,4 @@ tensorboard
 wandb
 python-dotenv
 imagecorruptions
+hyperopt
