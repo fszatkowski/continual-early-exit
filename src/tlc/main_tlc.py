@@ -19,16 +19,14 @@ def decode_bias_dict(
 ) -> Tensor:
     n_tasks = len(classes_per_task)
 
-    a = bias_dict["a"]
     b = bias_dict["b"]
 
     dists = n_ics * [[n_tasks - 1 - i for i in range(n_tasks)]]
     dists = torch.tensor(dists)
     b = torch.ones_like(dists) * b
     b[:, -1] = 0
-    bias = a * dists + b
 
-    return bias.to(device, non_blocking=True)
+    return b.to(device, non_blocking=True)
 
 
 def expand_bias(bias: Tensor, classes_per_task: List[int]) -> Tensor:
@@ -39,7 +37,7 @@ def expand_bias(bias: Tensor, classes_per_task: List[int]) -> Tensor:
         for i in range(len(classes_per_task)):
             for j in range(classes_per_task[i]):
                 cur_idx = sum(classes_per_task[:i]) + j
-                new_bias[:, cur_idx : cur_idx + 1] = bias[:, i].unsqueeze(1)
+                new_bias[:, cur_idx: cur_idx + 1] = bias[:, i].unsqueeze(1)
         return new_bias
 
 
@@ -67,12 +65,12 @@ def optimize_tlc(
     device = logits.device
     if hp_space == "normal":
         hp_init = {
-            "a": hp.normal("a", mu=hp_mu, sigma=hp_sigma),
+            # "a": hp.normal("a", mu=hp_mu, sigma=hp_sigma),
             "b": hp.normal("b", mu=hp_mu, sigma=hp_sigma),
         }
     elif hp_space == "uniform":
         hp_init = {
-            "a": hp.uniform("a", low=hp_min, high=hp_max),
+            # "a": hp.uniform("a", low=hp_min, high=hp_max),
             "b": hp.uniform("b", low=hp_min, high=hp_max),
         }
     else:
@@ -110,7 +108,9 @@ def optimize_tlc(
         trials=trials,
         rstate=np.random.default_rng(seed),
     )
-    best_bias = decode_bias_dict(best_coefficients, n_ics, classes_per_task, device)
+    best_bias = decode_bias_dict(
+        best_coefficients, n_ics, classes_per_task, device
+    )
     return best_bias, trials.losses()
 
 
@@ -120,15 +120,17 @@ def parse_args():
         "--train_logits_glob",
         type=str,
         required=True,
-        help="Directory with logits for training TLC parameters. The loss function will use all data "
-        "in this directory, so to run TLC describted in the paper one should provide the "
-        "directory with only last task logits.",
+        help="Directory with logits for training TLC parameters. The loss "
+        "function will use all data in this directory, so to run TLC "
+        "describted in the paper one should provide the directory with "
+        "only last task logits.",
     )
     parser.add_argument(
         "--test_logits_glob",
         type=str,
         required=True,
-        help="Directory with logits for testing. Should contain all tasks data.",
+        help="Directory with logits for testing."
+        "Should contain all tasks data.",
     )
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument(
@@ -163,13 +165,19 @@ if __name__ == "__main__":
         test_logits = data["test_logits_tag"]
         test_targets = data["test_targets"]
         n_tasks = data["n_tasks"]
-        classes_per_task = [d["classes_per_task"] for d in data["test_data_per_task"]]
+        classes_per_task = [
+            d["classes_per_task"] for d in data["test_data_per_task"]
+        ]
         if len(set(classes_per_task)) != 1:
-            raise NotImplementedError("Only same sized tasks are handled for now.")
+            raise NotImplementedError(
+                "Only same sized tasks are handled for now."
+            )
 
         n_ics = train_logits.shape[1]
         n_thresholds = 500
-        thresholds = torch.tensor([x / n_thresholds for x in range(n_thresholds + 1)])
+        thresholds = torch.tensor(
+            [x / n_thresholds for x in range(n_thresholds + 1)]
+        )
         costs = data["ee_eval"][n_tasks - 1]["exit_costs"]
         baseline_cost = data["ee_eval"][n_tasks - 1]["baseline_cost"]
         costs = torch.tensor(costs) / baseline_cost
@@ -190,7 +198,8 @@ if __name__ == "__main__":
         if bias_data_path.exists():
             best_bias = torch.load(bias_data_path)
             print(
-                f"\tFound computed TLC data at {bias_data_path}, skipping the optimization"
+                f"\tFound computed TLC data at {bias_data_path}, "
+                "skipping the optimization"
             )
         else:
             print("\tOptimizing TLC...")
