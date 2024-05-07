@@ -12,7 +12,7 @@ conda activate FACIL
 num_tasks=10
 n_epochs=200
 tag="tiny200x10"
-saapproach='icarl'
+approach='icarl'
 num_exemplars=2000
 
 lamb=0.5

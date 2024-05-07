@@ -16,7 +16,7 @@ approach='ewc'
 lamb=10000
 alpha=0.5
 
-for seed in 0; do
+for seed in 0 1 2; do
   python src/main_incremental.py \
     --gpu 0 \
     --seed ${seed} \

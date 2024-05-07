@@ -17,7 +17,7 @@ num_exemplars=2000
 
 lamb=2
 
-for seed in 0; do
+for seed in 0 1 2; do
   python src/main_incremental.py \
     --gpu 0 \
     --seed ${seed} \

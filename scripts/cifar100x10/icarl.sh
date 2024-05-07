@@ -12,12 +12,12 @@ conda activate FACIL
 num_tasks=10
 n_epochs=200
 tag="cifar100x10"
-saapproach='icarl'
+approach='icarl'
 num_exemplars=2000
 
 lamb=0.5
 
-for seed in 0; do
+for seed in 0 1 2; do
   python src/main_incremental.py \
     --gpu 0 \
     --seed ${seed} \

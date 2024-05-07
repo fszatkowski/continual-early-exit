@@ -14,7 +14,7 @@ n_epochs=200
 tag="cifar100x5"
 approach='joint'
 
-for seed in 0; do
+for seed in 0 1 2; do
   python src/main_incremental.py \
     --gpu 0 \
     --seed ${seed} \

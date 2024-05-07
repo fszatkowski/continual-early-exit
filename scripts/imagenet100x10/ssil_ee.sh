@@ -37,7 +37,7 @@ for seed in 0; do
     --approach ${approach} \
     --lamb ${lamb} \
     --log disk wandb \
-    --results-path ./results/ImageNet100x${num_tasks}/${approach}_ex_${num_exemplars}_lamb_${lamb}_ee/seed${seed} \
+    --results-path ./results/ImageNet100x${num_tasks}/${approach}_ex${num_exemplars}_lamb_${lamb}_ee/seed${seed} \
     --exp-name ee_${tag} \
     --save-models \
     --tags ${tag}

@@ -16,7 +16,7 @@ approach='ssil'
 lamb=0.25
 num_exemplars=2000
 
-for seed in 0; do
+for seed in 0 1 2; do
   python src/main_incremental.py \
     --gpu 0 \
     --num-workers 0 \

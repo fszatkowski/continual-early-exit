@@ -16,7 +16,7 @@ approach='ssil'
 lamb=0.25
 num_exemplars=2000
 
-for seed in 0; do
+for seed in 0 1 2; do
   python src/main_incremental.py \
     --gpu 0 \
     --num-workers 0 \
@@ -37,7 +37,7 @@ for seed in 0; do
     --approach ${approach} \
     --lamb ${lamb} \
     --log disk wandb \
-    --results-path ./results/CIFAR100x${num_tasks}/${approach}_ex_${num_exemplars}_lamb_${lamb}_ee/seed${seed} \
+    --results-path ./results/CIFAR100x${num_tasks}/${approach}_ex${num_exemplars}_lamb_${lamb}_ee/seed${seed} \
     --exp-name ee_${tag} \
     --save-models \
     --tags ${tag}
