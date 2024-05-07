@@ -479,13 +479,13 @@ class iCaRLModelWrapper(torch.nn.Module):
         if self.logit_conversion == "reverse":
             logits = -dists
         elif self.logit_conversion == "pdf":
-            logits = self.nmc_probs(dists)
+            logits = self.pdf_logits(dists)
         else:
             raise NotImplementedError()
         return logits
 
-    def nmc_probs(self, dists, sigma=1):
-        # TODO check this code
-        exponent = torch.exp(-0.5 * (dists / sigma**2))
-        norm_term = 1 / (2 * torch.pi * sigma**2) ** 0.5
-        return norm_term * exponent
+    def pdf_logits(self, dists, sigma=1):
+        probabilities = torch.exp(-0.5 * (dists ** 2) / sigma) / (2 * torch.pi * sigma) ** 0.5
+        normalized_probabilities = probabilities / torch.sum(probabilities, dim=1, keepdim=True)
+        logits = torch.log(normalized_probabilities)
+        return logits
