@@ -15,7 +15,7 @@ tag="imagenet100x5"
 approach='bic'
 num_exemplars=2000
 
-lamb=2
+lamb=1
 
 for seed in 0; do
   python src/main_incremental.py \

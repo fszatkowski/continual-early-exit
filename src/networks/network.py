@@ -14,13 +14,14 @@ class LLL_Net(nn.Module):
     """Basic class for implementing networks"""
 
     def __init__(
-            self,
-            model,
-            remove_existing_head=False,
-            ic_type=None,
-            ic_layers=None,
-            input_size=None,
-            ic_weighting="sdn",
+        self,
+        model,
+        remove_existing_head=False,
+        ic_type=None,
+        ic_layers=None,
+        input_size=None,
+        ic_weighting="sdn",
+        detach_ics=False,
     ):
         head_var = model.head_var
         assert type(head_var) == str
@@ -81,6 +82,7 @@ class LLL_Net(nn.Module):
             self.heads = nn.ModuleList()
 
         self.ic_weighting = ic_weighting
+        self.detach_ics = detach_ics
         self.exit_layer_idx = None
         self.task_cls = []
         self.task_offset = []
@@ -141,6 +143,9 @@ class LLL_Net(nn.Module):
             outputs = []
             for head_idx, (ic_features, heads) in enumerate(zip(features, self.heads)):
                 head_outputs = []
+                if self.detach_ics and head_idx != len(heads) - 1:
+                    ic_features = ic_features.detach()
+
                 for head in heads:
                     head_outputs.append(head(ic_features))
                 outputs.append(head_outputs)
@@ -224,7 +229,9 @@ class LLL_Net(nn.Module):
         if self.ic_weighting == "sdn":
             return get_sdn_weights(current_epoch, max_epochs, n_ics=len(self.ic_layers))
         if self.ic_weighting == "sdn_normalized":
-            sdn_weights = get_sdn_weights(current_epoch, max_epochs, n_ics=len(self.ic_layers))
+            sdn_weights = get_sdn_weights(
+                current_epoch, max_epochs, n_ics=len(self.ic_layers)
+            )
             norm = sum(sdn_weights)
             return [w / norm for w in sdn_weights]
         elif self.ic_weighting == "uniform":

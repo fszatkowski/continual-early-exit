@@ -23,16 +23,18 @@ def aggregate_ee_data(th_data, ic_data):
     output_th_data = []
     output_ic_data = []
 
-    run_names = list(set(list(th_data['run_name'].unique())))
+    run_names = list(set(list(th_data["run_name"].unique())))
     for run_name in run_names:
-        run_th_data = th_data[th_data['run_name'] == run_name].sort_values(by=['seed', 'cost'])
-        seeds = list(run_th_data['seed'].unique())
+        run_th_data = th_data[th_data["run_name"] == run_name].sort_values(
+            by=["seed", "cost"]
+        )
+        seeds = list(run_th_data["seed"].unique())
 
         costs_th = []
         accs_th = []
         for seed in seeds:
-            cost = run_th_data[run_th_data['seed'] == seed]['cost'].values
-            acc = run_th_data[run_th_data['seed'] == seed]['acc'].values
+            cost = run_th_data[run_th_data["seed"] == seed]["cost"].values
+            acc = run_th_data[run_th_data["seed"] == seed]["acc"].values
             costs_th.append(cost)
             accs_th.append(acc)
         costs_th = np.stack(costs_th, axis=0)
@@ -42,21 +44,21 @@ def aggregate_ee_data(th_data, ic_data):
         acc_mean = accs_th.mean(axis=0)
         acc_std = accs_th.std(axis=0)
 
-        base_run_th = deepcopy(run_th_data[run_th_data['seed'] == seeds[0]])
-        base_run_th['cost_avg'] = cost_mean
-        base_run_th['cost_std'] = cost_std
-        base_run_th['acc_avg'] = acc_mean
-        base_run_th['acc_std'] = acc_std
+        base_run_th = deepcopy(run_th_data[run_th_data["seed"] == seeds[0]])
+        base_run_th["cost_avg"] = cost_mean
+        base_run_th["cost_std"] = cost_std
+        base_run_th["acc_avg"] = acc_mean
+        base_run_th["acc_std"] = acc_std
         output_th_data.append(base_run_th)
 
-        run_ic_data = ic_data[ic_data['run_name'] == run_name]
+        run_ic_data = ic_data[ic_data["run_name"] == run_name]
         if len(run_ic_data) == 0:
             continue
         costs_ic = []
         accs_ic = []
         for seed in seeds:
-            cost = run_ic_data[run_ic_data['seed'] == seed]['cost'].values
-            acc = run_ic_data[run_ic_data['seed'] == seed]['acc'].values
+            cost = run_ic_data[run_ic_data["seed"] == seed]["cost"].values
+            acc = run_ic_data[run_ic_data["seed"] == seed]["acc"].values
             costs_ic.append(cost)
             accs_ic.append(acc)
         costs_ic = np.stack(costs_ic, axis=0)
@@ -67,11 +69,11 @@ def aggregate_ee_data(th_data, ic_data):
         acc_mean = accs_ic.mean(axis=0)
         acc_std = accs_ic.std(axis=0)
 
-        base_run_ic = deepcopy(run_ic_data[run_ic_data['seed'] == seeds[0]])
-        base_run_ic['cost_avg'] = cost_mean
-        base_run_ic['cost_std'] = cost_std
-        base_run_ic['acc_avg'] = acc_mean
-        base_run_ic['acc_std'] = acc_std
+        base_run_ic = deepcopy(run_ic_data[run_ic_data["seed"] == seeds[0]])
+        base_run_ic["cost_avg"] = cost_mean
+        base_run_ic["cost_std"] = cost_std
+        base_run_ic["acc_avg"] = acc_mean
+        base_run_ic["acc_std"] = acc_std
         output_ic_data.append(base_run_ic)
 
     ic_data = pd.concat(output_ic_data)
@@ -85,39 +87,60 @@ def plot_compare(th_data, ic_data, output_path):
     plt.figure()
 
     th_data, ic_data = aggregate_ee_data(th_data, ic_data)
-    th_data = th_data.sort_values(by=['ee'])
+    th_data = th_data.sort_values(by=["ee"])
 
     if len(th_data) > 0 and len(ic_data) > 0:
-        colors = sns.color_palette('tab10')
-        keys = list(set(list(th_data['run_name'].unique()) + list(ic_data['run_name'].unique())))
+        colors = sns.color_palette("tab10")
+        keys = list(
+            set(list(th_data["run_name"].unique()) + list(ic_data["run_name"].unique()))
+        )
         palette = {k: colors[i] for i, k in enumerate(keys)}
     else:
         palette = None
     if len(th_data) > 0:
-        plot = sns.lineplot(x="cost_avg", y="acc_avg", hue="run_name", data=th_data, palette=palette)
-        for run_name in th_data['run_name'].unique():
-            run_data = th_data[th_data['run_name'] == run_name]
-            run_data = run_data.sort_values(by=['cost_avg'])
-            avg_cost = run_data['cost_avg']
-            y_1 = run_data['acc_avg'] - run_data['acc_std']
-            y_2 = run_data['acc_avg'] + run_data['acc_std']
+        plot = sns.lineplot(
+            x="cost_avg", y="acc_avg", hue="run_name", data=th_data, palette=palette
+        )
+        for run_name in th_data["run_name"].unique():
+            run_data = th_data[th_data["run_name"] == run_name]
+            run_data = run_data.sort_values(by=["cost_avg"])
+            avg_cost = run_data["cost_avg"]
+            y_1 = run_data["acc_avg"] - run_data["acc_std"]
+            y_2 = run_data["acc_avg"] + run_data["acc_std"]
             if any(y_1.values != y_2.values):
-                plt.fill_between(avg_cost, y_1, y_2,
-                                 alpha=0.3, color=palette[run_name], interpolate=True)
+                plt.fill_between(
+                    avg_cost,
+                    y_1,
+                    y_2,
+                    alpha=0.3,
+                    color=palette[run_name],
+                    interpolate=True,
+                )
 
     if len(ic_data) > 0:
         plot = sns.scatterplot(
-            x="cost_avg", y="acc_avg", hue="run_name", data=ic_data, legend=False, palette=palette
+            x="cost_avg",
+            y="acc_avg",
+            hue="run_name",
+            data=ic_data,
+            legend=False,
+            palette=palette,
         )
-        for run_name in ic_data['run_name'].unique():
-            run_data = ic_data[ic_data['run_name'] == run_name]
+        for run_name in ic_data["run_name"].unique():
+            run_data = ic_data[ic_data["run_name"] == run_name]
             if len(run_data) == 0:
                 continue
-            run_data = run_data.sort_values(by=['cost_avg'])
-            y_1 = run_data['acc_avg'] - run_data['acc_std']
-            y_2 = run_data['acc_avg'] + run_data['acc_std']
+            run_data = run_data.sort_values(by=["cost_avg"])
+            y_1 = run_data["acc_avg"] - run_data["acc_std"]
+            y_2 = run_data["acc_avg"] + run_data["acc_std"]
             if any(y_1.values != y_2.values):
-                plt.errorbar(run_data['cost_avg'], run_data['acc_avg'], yerr=run_data['acc_std'], fmt='none', color=palette[run_name])
+                plt.errorbar(
+                    run_data["cost_avg"],
+                    run_data["acc_avg"],
+                    yerr=run_data["acc_std"],
+                    fmt="none",
+                    color=palette[run_name],
+                )
     plot.get_figure().savefig(str(output_path))
 
 
@@ -134,6 +157,7 @@ if __name__ == "__main__":
     th_plot_data = []
     output_data = []
 
+    result_dirs = sorted(list(result_dirs))
     for r in tqdm(result_dirs):
         results = list(r.glob("*"))
         if len(results) == 0:
@@ -152,7 +176,7 @@ if __name__ == "__main__":
         dataset = run_name.strip("/").split("/")[0]
         run_name = "_".join(run_name.strip("/").split("/")[1:])
         seed = int(run_name.split("seed")[-1])
-        run_name = run_name.replace(f'_seed{seed}', '')
+        run_name = run_name.replace(f"_seed{seed}", "")
         method = run_name.split("_")[0]
         if "ex" in run_name:
             method += "_ex" + run_name.split("ex")[1].split("_")[0]
@@ -173,7 +197,12 @@ if __name__ == "__main__":
                 "th_100": best_th_acc(per_th_cost, per_th_acc, 1.0),
                 "th_none": max(per_ic_acc),
             }
-            output = {"dataset": dataset, "method": method, "run_name": run_name, 'seed': seed}
+            output = {
+                "dataset": dataset,
+                "method": method,
+                "run_name": run_name,
+                "seed": seed,
+            }
             output.update(ic_accs)
             output.update(th_accs)
             output_data.append(output)
@@ -187,9 +216,8 @@ if __name__ == "__main__":
                         "run_name": run_name,
                         "cost": ic_cost,
                         "acc": ic_acc,
-                        'ee': True,
-                        'seed': seed
-
+                        "ee": True,
+                        "seed": seed,
                     }
                 )
             for th_acc, th_cost in zip(per_th_acc.tolist(), per_th_cost.tolist()):
@@ -201,8 +229,7 @@ if __name__ == "__main__":
                         "cost": th_cost,
                         "acc": th_acc,
                         "ee": True,
-                        'seed': seed
-
+                        "seed": seed,
                     }
                 )
         else:
@@ -215,7 +242,7 @@ if __name__ == "__main__":
                 "method": method,
                 "run_name": run_name,
                 "no_ee_acc": final_val,
-                'seed': seed
+                "seed": seed,
             }
             output_data.append(output)
 
@@ -227,8 +254,7 @@ if __name__ == "__main__":
                     "cost": 0.2,
                     "acc": final_val,
                     "ee": False,
-                    'seed': seed
-
+                    "seed": seed,
                 }
             )
             th_plot_data.append(
@@ -239,8 +265,7 @@ if __name__ == "__main__":
                     "cost": 1,
                     "acc": final_val,
                     "ee": False,
-                    'seed': seed
-
+                    "seed": seed,
                 }
             )
 
@@ -256,22 +281,26 @@ if __name__ == "__main__":
     method_names = data["method"].unique()
     dataset_method_combinations = [(d, m) for d in datasets for m in method_names]
     for dataset_name, method_name in tqdm(
-            dataset_method_combinations, "Plotting early exit scores..."
+        dataset_method_combinations, "Plotting early exit scores..."
     ):
         dataset_output_dir = output_dir / dataset_name
         dataset_output_dir.mkdir(exist_ok=True, parents=True)
 
         dataset_method_th_data = th_plot_data[
-            (th_plot_data["dataset"] == dataset_name) & (th_plot_data["method"] == method_name)
-            ]
+            (th_plot_data["dataset"] == dataset_name)
+            & (th_plot_data["method"] == method_name)
+        ]
         dataset_method_ic_data = ic_plot_data[
-            (ic_plot_data["dataset"] == dataset_name) & (ic_plot_data["method"] == method_name)
-            ]
+            (ic_plot_data["dataset"] == dataset_name)
+            & (ic_plot_data["method"] == method_name)
+        ]
 
         if len(dataset_method_ic_data) == 0 and len(dataset_method_th_data) == 0:
             print(f"Skipping {method_name} for {dataset_name} due to no data")
             continue
 
         plot_compare(
-            dataset_method_th_data, dataset_method_ic_data, dataset_output_dir / (method_name + ".png")
+            dataset_method_th_data,
+            dataset_method_ic_data,
+            dataset_output_dir / (method_name + ".png"),
         )

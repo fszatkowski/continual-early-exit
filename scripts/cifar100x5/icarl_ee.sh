@@ -15,7 +15,7 @@ tag="cifar100x5"
 approach='icarl'
 num_exemplars=2000
 
-lamb=0.5
+lamb=0.25
 
 for seed in 0 1 2; do
   python src/main_incremental.py \

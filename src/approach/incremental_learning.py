@@ -242,7 +242,7 @@ class Inc_Learning_Appr:
         if self.scheduler is not None:
             self.scheduler.step()
 
-    def eval(self, t, val_loader):
+    def eval(self, t, val_loader, features_save_dir=None):
         """Contains the evaluation code"""
         with torch.no_grad():
             if self.model.is_early_exit():
@@ -255,13 +255,19 @@ class Inc_Learning_Appr:
             else:
                 total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
-            for images, targets in val_loader:
+            for batch_idx, (images, targets) in enumerate(val_loader):
                 # Forward current model
                 images, targets = images.to(self.device, non_blocking=True), targets.to(
                     self.device, non_blocking=True
                 )
 
-                outputs = self.model(images)
+                if features_save_dir is not None:
+                    outputs, features = self.model(images, return_features=True)
+                    torch.save(
+                        features, features_save_dir / f"task_{t}_batch{batch_idx}.pt"
+                    )
+                else:
+                    outputs = self.model(images)
                 loss = self.criterion(t, outputs, targets)
 
                 if self.model.is_early_exit():

@@ -1,54 +1,53 @@
 from os.path import join
 
-_BASE_DATA_PATH = "/data/SHARE/datasets"
-
-datasets_root = _BASE_DATA_PATH
+_DATASET_DIR_SHARED = "/data/SHARE/datasets"
+_DATASET_DIR_LOCAL = "data"
 
 dataset_config = {
     "flowers": {
-        "path": join(datasets_root, "flowers/"),
+        "path": join(_DATASET_DIR_SHARED, "flowers/"),
         "resize": (256, 256),
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "scenes": {
-        "path": join(datasets_root, "indoor_scenes/"),
+        "path": join(_DATASET_DIR_SHARED, "indoor_scenes/"),
         "resize": (256, 256),
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "birds": {
-        "path": join(datasets_root, "cubs_cropped/"),
+        "path": join(_DATASET_DIR_SHARED, "cubs_cropped/"),
         "resize": (256, 256),
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "cars": {
-        "path": join(datasets_root, "stanford_cars_cropped/"),
+        "path": join(_DATASET_DIR_SHARED, "stanford_cars_cropped/"),
         "resize": (256, 256),
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "aircrafts": {
-        "path": join(datasets_root, "aircrafts_cropped/"),
+        "path": join(_DATASET_DIR_SHARED, "aircrafts_cropped/"),
         "resize": (256, 256),
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "actions": {
-        "path": join(datasets_root, "Stanford40/"),
+        "path": join(_DATASET_DIR_SHARED, "Stanford40/"),
         "resize": (256, 256),
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "mnist": {
-        "path": join(_BASE_DATA_PATH, "mnist"),
+        "path": join(_DATASET_DIR_LOCAL, "mnist"),
         "normalize": ((0.1307,), (0.3081,)),
         # Use the next 3 lines to use MNIST with a 3x32x32 input
         # 'extend_channel': 3,
@@ -56,14 +55,14 @@ dataset_config = {
         # 'normalize': ((0.1,), (0.2752,))    # values including padding
     },
     "svhn": {
-        "path": join(_BASE_DATA_PATH, "svhn"),
+        "path": join(_DATASET_DIR_LOCAL, "svhn"),
         "resize": (224, 224),
         "crop": None,
         "flip": False,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "cifar100": {
-        "path": join(_BASE_DATA_PATH, "cifar100"),
+        "path": join(_DATASET_DIR_LOCAL, "cifar100"),
         "resize": None,
         "pad": 4,
         "crop": 32,
@@ -71,7 +70,7 @@ dataset_config = {
         "normalize": ((0.5071, 0.4866, 0.4409), (0.2009, 0.1984, 0.2023)),
     },
     "cifar100_fixed": {
-        "path": join(_BASE_DATA_PATH, "cifar100"),
+        "path": join(_DATASET_DIR_LOCAL, "cifar100"),
         "resize": None,
         "pad": 4,
         "crop": 32,
@@ -181,7 +180,7 @@ dataset_config = {
         ],
     },
     "cifar100_icarl": {
-        "path": join(_BASE_DATA_PATH, "cifar100"),
+        "path": join(_DATASET_DIR_LOCAL, "cifar100"),
         "resize": None,
         "pad": 4,
         "crop": 32,
@@ -291,21 +290,21 @@ dataset_config = {
         ],
     },
     "vggface2": {
-        "path": join(_BASE_DATA_PATH, "VGGFace2"),
+        "path": join(_DATASET_DIR_SHARED, "VGGFace2"),
         "resize": 256,
         "crop": 224,
         "flip": True,
         "normalize": ((0.5199, 0.4116, 0.3610), (0.2604, 0.2297, 0.2169)),
     },
     "imagenet_256": {
-        "path": join(_BASE_DATA_PATH, "ILSVRC12_256"),
+        "path": join(_DATASET_DIR_SHARED, "ILSVRC12_256"),
         "resize": None,
         "crop": 224,
         "flip": True,
         "normalize": ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     },
     "imagenet_subset": {
-        "path": join(_BASE_DATA_PATH, "ILSVRC12_256"),
+        "path": join(_DATASET_DIR_SHARED, "ILSVRC12_256"),
         "resize": None,
         "crop": 224,
         "flip": True,
@@ -414,7 +413,7 @@ dataset_config = {
         ],
     },
     "imagenet_32_reduced": {
-        "path": join(_BASE_DATA_PATH, "ILSVRC12_32"),
+        "path": join(_DATASET_DIR_SHARED, "ILSVRC12_32"),
         "resize": None,
         "pad": 4,
         "crop": 32,
@@ -724,7 +723,7 @@ dataset_config = {
         ],
     },
     "imagenet_subset_kaggle": {
-        "path": join(datasets_root, "seed_1993_subset_100_imagenet"),
+        "path": join(_DATASET_DIR_SHARED, "seed_1993_subset_100_imagenet"),
         "test_resize": 256,
         "crop": 224,
         "flip": True,
@@ -834,7 +833,7 @@ dataset_config = {
         "class_order": list(range(100)),
     },
     "tiny_scaled_imnet": {
-        "path": join(datasets_root, "tiny-imagenet-200"),
+        "path": join(_DATASET_DIR_SHARED, "tiny-imagenet-200"),
         "resize": 32,
         "test_resize": 32,
         "crop": 32,
@@ -1045,7 +1044,7 @@ dataset_config = {
         ],
     },
     "tiny_imnet": {
-        "path": join(datasets_root, "tiny-imagenet-200"),
+        "path": join(_DATASET_DIR_SHARED, "tiny-imagenet-200"),
         "resize": 64,
         "test_resize": 64,
         "crop": 64,
@@ -1256,7 +1255,7 @@ dataset_config = {
         ],
     },
     "domainnet": {
-        "path": join(datasets_root, "domainnet"),
+        "path": join(_DATASET_DIR_SHARED, "domainnet"),
         "resize": 256,
         "crop": 224,
         "flip": True,
