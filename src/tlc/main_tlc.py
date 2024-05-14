@@ -8,6 +8,7 @@ import pandas as pd
 import torch
 from hyperopt import STATUS_OK, Trials, fmin, hp
 from torch import Tensor
+from tqdm import tqdm
 
 from tlc.eval import compute_metrics, evaluate_ee, evaluate_ics
 from tlc.utils import load_data
@@ -114,6 +115,53 @@ def optimize_tlc(
     return best_bias, trials.losses()
 
 
+def optimize_icicle(
+    logits: Tensor,
+    n_tasks: int,
+    u: float = 0.1,
+    eps: float = 0.1,
+    batch_size: int = 1000,
+):
+    device = logits.device
+    n_ics = logits.shape[1]
+    classes_per_task = logits.shape[-1] // n_tasks
+    n_samples = logits.shape[0]
+
+    last_task_logits = logits[:, :, -classes_per_task:]
+    biases = torch.zeros((n_ics, n_tasks), device=device)
+    ic_task_ids = [
+        (ic_idx, task_idx) for ic_idx in range(n_ics) for task_idx in range(n_tasks - 1)
+    ]
+    for ic_idx, task_idx in tqdm(
+        ic_task_ids, desc=f"Optimizing ICICLE logits (u={u})..."
+    ):
+        task_logits = logits[
+            :, ic_idx, task_idx * classes_per_task : (task_idx + 1) * classes_per_task
+        ].unsqueeze(0)
+        last_task_ic_logits = last_task_logits[:, ic_idx].unsqueeze(0)
+
+        ic_task_bias = eps * torch.arange(0, batch_size, 1.0, device=device).unsqueeze(
+            1
+        ).unsqueeze(1)
+        total_task_pred_cnts = (
+            (task_logits + ic_task_bias).max(dim=-1).values
+            > last_task_ic_logits.max(dim=-1).values
+        ).sum(dim=1)
+        total_task_pred_cnts_ratios = total_task_pred_cnts > u * n_samples
+        while not any(total_task_pred_cnts_ratios):
+            ic_task_bias += eps * batch_size
+            total_task_pred_cnts = (
+                (task_logits + ic_task_bias).max(dim=-1).values
+                > last_task_ic_logits.max(dim=-1).values
+            ).sum(dim=1)
+            total_task_pred_cnts_ratios = total_task_pred_cnts > u * n_samples
+
+        ic_task_bias = ic_task_bias[total_task_pred_cnts_ratios].min()
+        biases[ic_idx, task_idx] = ic_task_bias
+
+    return biases
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -145,9 +193,33 @@ def parse_args():
     parser.add_argument("--hp_sigma", type=float, default=1)
     parser.add_argument("--hp_min", type=float, default=-2)
     parser.add_argument("--hp_max", type=float, default=2)
+    parser.add_argument(
+        "--icicle-u",
+        type=float,
+        nargs="+",
+        default=[],
+        help="Comma separated list of u values to check for ICICLE-type bias correction.",
+    )
     parser.add_argument("--device", type=str, default="cpu")
 
     return parser.parse_args()
+
+
+def avg_confidence_by_pred(logits: Tensor, targets, n_tasks: int):
+    n_ics = logits.shape[1]
+    task_size = logits.shape[0] // n_tasks
+    logits_split_by_task = torch.stack(torch.split(logits, task_size, dim=0), dim=0)
+    targets_split_by_task = torch.stack(
+        torch.split(targets, task_size, dim=0), dim=0
+    ).unsqueeze(dim=-1)
+    correct_preds = (
+        logits_split_by_task.argmax(dim=-1) == targets_split_by_task
+    ).float()
+    max_conf = logits_split_by_task.softmax(dim=-1).max(dim=-1).values
+    max_conf_correct = max_conf * correct_preds
+    avg_max_conf = max_conf_correct.sum(dim=1) / correct_preds.sum(dim=1)
+
+    return avg_max_conf
 
 
 if __name__ == "__main__":
@@ -236,6 +308,40 @@ if __name__ == "__main__":
             plot_data.append({"method": "base", "acc": acc, "cost": cost})
         ee_metrics = compute_metrics(base_acc, base_cost)
         metrics.append({"method": "base", **ee_metrics})
+
+        avg_confs = avg_confidence_by_pred(test_logits, test_targets, n_tasks)
+        plot_heatmap(
+            avg_confs.T,
+            output_path / "avg_conf.png",
+            title="Avg confidence of correct prediction",
+            ylabel="IC idx",
+            xlabel="Task idx",
+        )
+
+        for u in args.icicle_u:
+            # ICICLE comparison
+            icicle_bias = optimize_icicle(
+                train_logits, n_tasks=n_tasks, u=u, eps=0.001, batch_size=1000
+            )
+            icicle_bias = torch.repeat_interleave(
+                icicle_bias, classes_per_task[0], dim=1
+            )
+            adapted_logits_icicle = test_logits + icicle_bias.unsqueeze(0)
+
+            # Evaluate with our early exit strategy
+            ee_acc_icicle, ee_cost_icicle = evaluate_ee(
+                probs=torch.nn.functional.softmax(adapted_logits_icicle, dim=-1),
+                targets=test_targets,
+                exit_costs=costs,
+                thresholds=thresholds,
+                return_max_conf_on_no_exit=True,
+            )
+            for acc, cost in zip(ee_acc_icicle.tolist(), ee_cost_icicle.tolist()):
+                plot_data.append({"method": f"icicle_u={u}", "acc": acc, "cost": cost})
+
+            ee_metrics = compute_metrics(ee_acc_icicle, ee_cost_icicle)
+            metrics.append({"method": f"icicle_u={u}", **ee_metrics})
+
         evaluate_ics(
             probs=torch.nn.functional.softmax(test_logits, dim=-1),
             targets=test_targets,
@@ -248,4 +354,12 @@ if __name__ == "__main__":
 
         df = pd.DataFrame(plot_data)
         df.to_csv(output_path / "data.csv", index=False)
-        plot_cost_vs_acc(df, output_path / "cost_vs_acc.png")
+        dataset = output_path.parent.parent.parent.name
+        method = output_path.parent.parent.name
+        plot_cost_vs_acc(
+            df,
+            output_path / "cost_vs_acc.png",
+            title=f"Cost vs Accuracy, {dataset}, {method}",
+            xlabel="Cost",
+            ylabel="Accuracy",
+        )
